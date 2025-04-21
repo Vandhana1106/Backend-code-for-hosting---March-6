@@ -5,7 +5,7 @@ from django.db import models
 class MachineLog(models.Model):
     MACHINE_ID = models.IntegerField()
     LINE_NUMB = models.IntegerField()
-    OPERATOR_ID = models.PositiveIntegerField()
+    OPERATOR_ID = models.CharField(max_length=30)
     DATE = models.DateField()
     START_TIME = models.TimeField()
     END_TIME = models.TimeField()
@@ -21,7 +21,7 @@ class MachineLog(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
-        unique_together = ('MACHINE_ID', 'OPERATOR_ID', 'DATE','START_TIME', 'END_TIME')
+        pass
 
 class DuplicateLog(models.Model):
     payload = models.JSONField()
@@ -42,3 +42,11 @@ class User(models.Model):
 
     def __str__(self):
         return self.username
+
+class Operator(models.Model):
+    rfid_card_no = models.CharField(max_length=20, unique=True)
+    operator_name = models.CharField(max_length=50)
+    remarks = models.CharField(max_length=100, blank=True, null=True)
+
+    def __str__(self):
+        return self.operator_name

@@ -31,6 +31,7 @@ ALLOWED_HOSTS = ["*"]
 # Application definition
 
 INSTALLED_APPS = [
+    'import_export',  # Add this line
     'django.contrib.admin',
     'django.contrib.auth',
     'django.contrib.contenttypes',
@@ -61,6 +62,7 @@ ROOT_URLCONF = 'machine_log_api.urls'
 CORS_ALLOWED_ORIGINS = [
     'https://sewingmachine.netlify.app',  
     'http://localhost:5173',
+    'https://2nbcjqrb-5173.inc1.devtunnels.ms',
 ]
 TEMPLATES = [
     {
@@ -89,7 +91,7 @@ DATABASES = {
         'ENGINE': 'django.db.backends.postgresql',
         'NAME': 'productdb',
         'USER': 'postgres',
-        'PASSWORD': 'postgres',
+        'PASSWORD': 'admin',
         'HOST': 'localhost',
         'PORT': '5432',
     }
@@ -126,7 +128,10 @@ USE_I18N = True
 
 USE_TZ = True
 
-
+CORS_ALLOW_CREDENTIALS = True  # If you need to send cookies or authentication tokens
+CORS_ALLOW_METHODS = ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS']
+CORS_ALLOW_HEADERS = ['*']
+CORS_ALLOW_ALL_ORIGINS = True
 WHITENOISE_USE_FINDERS = True
 WHITENOISE_MAX_AGE = 31536000  # Cache for one year (optional)
 WHITENOISE_ENABLE_GZIP = True   # Enable Gzip compression (optional)

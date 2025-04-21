@@ -10,4 +10,10 @@ urlpatterns = [
     path('calculate_efficiency/', calculate_line_efficiency, name='calculate_efficiency'),
     path('calculate_operator_efficiency/', calculate_operator_efficiency, name='calculate_operator_efficiency'),
     path('api/calculate_operator_efficiency/',calculate_operator_efficiency, name='calculate_operator_efficiency'),
+    path('operator_report_by_name/<str:operator_name>/', operator_reports_by_name, name='operator_reports_by_name'),
+    path('line-reports/<int:line_number>/', line_reports, name='line-reports'),
+    path('line-reports/<str:line_number>/', line_reports, name='line-reports'),
+    path('api/machines/<str:machine_id>/reports/', machine_reports, name='machine-reports'),
+    path('api/operator_reports/', operator_reports_all, name='operator_reports_all'),
+    
 ]
