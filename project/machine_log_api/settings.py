@@ -50,6 +50,7 @@ CORS_ALLOWED_ORIGINS = [
     'https://sewingmachine.netlify.app',
     'http://localhost:5173',
     'https://2nbcjqrb-5173.inc1.devtunnels.ms',
+    
 ]
 CORS_ALLOW_CREDENTIALS = True
 CORS_ALLOW_METHODS = ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS']
