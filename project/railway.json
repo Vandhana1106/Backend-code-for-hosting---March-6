@@ -5,6 +5,6 @@
     }
   },
   "deploy": {
-    "startCommand": "python manage.py collectstatic --noinput && gunicorn machine_log_api.wsgi:application --bind 0.0.0.0:8000"
+    "startCommand": "python manage.py collectstatic --noinput && gunicorn machine_log_api.wsgi:application --bind 0.0.0.0:8080"
   }
 }
