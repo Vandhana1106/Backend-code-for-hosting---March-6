@@ -16,4 +16,6 @@ urlpatterns = [
     path('api/machines/<str:machine_id>/reports/', machine_reports, name='machine-reports'),
     path('api/operator_reports/', operator_reports_all, name='operator_reports_all'),
     
+    path('logs/filter/', filter_logs, name='filter-logs'),
+    path('logs/line-numbers/', get_line_numbers, name='get-line-numbers'),
 ]

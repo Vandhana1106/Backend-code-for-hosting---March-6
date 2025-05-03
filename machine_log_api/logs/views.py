@@ -1168,3 +1168,67 @@ def operator_reports_all(request):
         })
 
     return Response(all_operators_data)
+
+from rest_framework.decorators import api_view
+from rest_framework.response import Response
+from .models import MachineLog, Operator
+
+MODES = {
+    0: 'Off',
+    1: 'Running',
+    2: 'Idle',
+    3: 'Maintenance',
+    # Add all your mode codes and descriptions here
+}
+
+@api_view(['GET'])
+def filter_logs(request):
+    line_number = request.GET.get('line_number')
+    from_date = request.GET.get('from_date')
+    to_date = request.GET.get('to_date')
+    
+    queryset = MachineLog.objects.all()
+    
+    if line_number and line_number.lower() != 'all':
+        queryset = queryset.filter(LINE_NUMB=line_number)
+    
+    if from_date:
+        queryset = queryset.filter(DATE__gte=from_date)
+    
+    if to_date:
+        queryset = queryset.filter(DATE__lte=to_date)
+    
+    # Prefetch operator data to optimize queries
+    logs = list(queryset)
+    operator_ids = set(log.OPERATOR_ID for log in logs if log.OPERATOR_ID != "0")
+    operators = Operator.objects.filter(rfid_card_no__in=operator_ids)
+    operator_map = {op.rfid_card_no: op.operator_name for op in operators}
+    
+    data = []
+    for log in logs:
+        log_data = {
+            **log.__dict__,
+            'mode_description': MODES.get(log.MODE, 'Unknown mode'),
+            'operator_name': operator_map.get(log.OPERATOR_ID, "") if log.OPERATOR_ID != "0" else ""
+        }
+        # Remove Django internal fields
+        log_data.pop('_state', None)
+        data.append(log_data)
+    
+    return Response(data)
+
+@api_view(['GET'])
+def get_line_numbers(request):
+    from_date = request.GET.get('from_date')
+    to_date = request.GET.get('to_date')
+    
+    if not from_date or not to_date:
+        return Response({"error": "Both from_date and to_date are required"}, status=400)
+    
+    queryset = MachineLog.objects.filter(
+        DATE__gte=from_date,
+        DATE__lte=to_date
+    ).values_list('LINE_NUMB', flat=True).distinct()
+    
+    line_numbers = sorted(list(queryset))
+    return Response({"line_numbers": line_numbers})
