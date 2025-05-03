@@ -1,0 +1,3 @@
+web: gunicorn machine_log_api.wsgi
+
+web: gunicorn --bind 0.0.0.0:8080 machine_log_api.wsgi:application
