@@ -104,22 +104,45 @@ def log_machine_data(request):
 @api_view(['GET'])
 def get_machine_logs(request):
     """
-    View to retrieve all machine logs.
-    
-    Fetches all machine logs from the database and enriches them
-    with mode descriptions from the MODES dictionary.
-    
-    Returns:
-        Response containing serialized logs with mode descriptions
+    View to retrieve machine logs with optional date filtering.
     """
-    logs = MachineLog.objects.all()
+    from_date = request.query_params.get('from_date')
+    to_date = request.query_params.get('to_date')
+    
+    logs = MachineLog.objects.all().order_by('-created_at')
+    
+    if from_date:
+        logs = logs.filter(DATE__gte=from_date)
+    if to_date:
+        logs = logs.filter(DATE__lte=to_date)
+    
     serialized_logs = MachineLogSerializer(logs, many=True).data
 
-    # Add mode descriptions to the serialized logs
+    # Add mode descriptions
     for log in serialized_logs:
         log['mode_description'] = MODES.get(log.get('MODE'), 'Unknown mode')
 
     return Response(serialized_logs)
+
+# @api_view(['GET'])
+# def get_machine_logs(request):
+#     """
+#     View to retrieve all machine logs.
+
+#     Fetches all machine logs from the database and enriches them
+#     with mode descriptions from the MODES dictionary.
+
+#     Returns:
+#         Response containing serialized logs with mode descriptions
+#     """
+#     logs = MachineLog.objects.all()
+#     serialized_logs = MachineLogSerializer(logs, many=True).data
+
+#     # Add mode descriptions to the serialized logs
+#     for log in serialized_logs:
+#         log['mode_description'] = MODES.get(log.get('MODE'), 'Unknown mode')
+
+#     return Response(serialized_logs)
 
 @api_view(['POST'])
 def user_login(request):
@@ -288,8 +311,14 @@ def operator_reports_by_name(request, operator_name):
         - Daily breakdown in table format
     """
     try:
-        operator = Operator.objects.get(operator_name=operator_name)
-        logs = MachineLog.objects.filter(OPERATOR_ID=operator.rfid_card_no)
+        if operator_name=="All":
+            operator = Operator.objects.all( )
+            logs = MachineLog.objects.all()
+        else:
+            # Fetch operator by name
+            operator = Operator.objects.get(operator_name=operator_name)
+            logs = MachineLog.objects.filter(OPERATOR_ID=operator.rfid_card_no)    
+       
     except Operator.DoesNotExist:
         return Response({"error": "Operator not found"}, status=404)
 
@@ -431,47 +460,58 @@ def operator_reports_by_name(request, operator_name):
     needle_runtime_percentage = (total_needle_runtime_hours / total_production_hours * 100) if total_production_hours > 0 else 0
 
     # Fetch Table Data (daily breakdown)
-    table_data = logs.values('DATE').annotate(
-        sewing_hours=Sum(Case(
-            When(MODE=1, then=F('duration_hours')),
-            default=Value(0),
-            output_field=FloatField()
-        )),
-        meeting_hours=Sum(Case(
-            When(MODE=4, then=F('duration_hours')),
-            default=Value(0),
-            output_field=FloatField()
-        )),
-        no_feeding_hours=Sum(Case(
-            When(MODE=3, then=F('duration_hours')),
-            default=Value(0),
-            output_field=FloatField()
-        )),
-        maintenance_hours=Sum(Case(
-            When(MODE=5, then=F('duration_hours')),
-            default=Value(0),
-            output_field=FloatField()
-        )),
-        total_stitch_count=Sum('STITCH_COUNT'),
-        sewing_speed=Avg(Case(
-            When(reserve_numeric__gt=0, then=F('reserve_numeric')),
-            default=Value(0),
-            output_field=FloatField()
-        )),
-        needle_runtime=Sum('NEEDLE_RUNTIME')
+    table_data = logs.values('DATE', 'OPERATOR_ID').annotate(
+    sewing_hours=Sum(Case(
+        When(MODE=1, then=F('duration_hours')),
+        default=Value(0),
+        output_field=FloatField()
+    )),
+    meeting_hours=Sum(Case(
+        When(MODE=4, then=F('duration_hours')),
+        default=Value(0),
+        output_field=FloatField()
+    )),
+    no_feeding_hours=Sum(Case(
+        When(MODE=3, then=F('duration_hours')),
+        default=Value(0),
+        output_field=FloatField()
+    )),
+    maintenance_hours=Sum(Case(
+        When(MODE=5, then=F('duration_hours')),
+        default=Value(0),
+        output_field=FloatField()
+    )),
+    total_stitch_count=Sum('STITCH_COUNT'),
+    sewing_speed=Avg(Case(
+        When(reserve_numeric__gt=0, then=F('reserve_numeric')),
+        default=Value(0),
+        output_field=FloatField()
+    )),
+    needle_runtime=Sum('NEEDLE_RUNTIME')
     ).annotate(
-        total_hours=Value(10, output_field=FloatField()),
-        idle_hours=Value(10, output_field=FloatField()) - 
-                 (F('sewing_hours') + F('meeting_hours') + 
-                  F('no_feeding_hours') + F('maintenance_hours')),
-        productive_time_percentage=(F('sewing_hours') / 10) * 100,
-        npt_percentage=100 - (F('sewing_hours') / 10) * 100
-    ).order_by('DATE')
+    total_hours=Value(10, output_field=FloatField()),
+    idle_hours=Value(10, output_field=FloatField()) - 
+             (F('sewing_hours') + F('meeting_hours') + 
+              F('no_feeding_hours') + F('maintenance_hours')),
+    productive_time_percentage=(F('sewing_hours') / 10) * 100,
+    npt_percentage=100 - (F('sewing_hours') / 10) * 100
+    ).order_by('DATE', 'OPERATOR_ID')
 
-    formatted_table_data = [
-        {
+# Now format the data, fetching operator name from the Operator model
+    formatted_table_data = []
+    for data in table_data:
+    # Get operator details from the Operator model
+        try:
+            operator = Operator.objects.get( rfid_card_no=data['OPERATOR_ID'])
+            operator_name = operator.operator_name # Assuming the name field is called 'name'
+            rfid_card_no = operator.rfid_card_no  # Get RFID card number if needed
+        except Operator.DoesNotExist:
+            operator_name = "Unknown"
+            rfid_card_no = "Unknown"
+    
+        formatted_table_data.append({
             'Date': str(data['DATE']),
-            'Operator ID': operator.rfid_card_no,
+            'Operator ID': data['OPERATOR_ID'],
             'Operator Name': operator_name,
             'Total Hours': round(data['total_hours'], 2),
             'Sewing Hours': round(data['sewing_hours'], 2),
@@ -484,9 +524,7 @@ def operator_reports_by_name(request, operator_name):
             'Sewing Speed': round(data['sewing_speed'], 2),
             'Stitch Count': data['total_stitch_count'],
             'Needle Runtime': data['needle_runtime']
-        }
-        for data in table_data
-    ]
+        })
 
     return Response({
         "totalProductionHours": round(total_production_hours, 2),
@@ -1060,6 +1098,83 @@ def machine_reports(request, machine_id):
         machine_report = process_machine_data(logs, machine_id)
         return Response(machine_report)
 
+
+@api_view(['GET'])
+def all_machines_report(request):
+    try:
+        logs = MachineLog.objects.all()
+    except Exception as e:
+        return Response({"error": str(e)}, status=500)
+
+    # Get date filters from query parameters
+    from_date_str = request.GET.get('from_date', '')
+    to_date_str = request.GET.get('to_date', '')
+
+    # Apply date filtering if dates are provided
+    if from_date_str:
+        try:
+            from_date = datetime.strptime(from_date_str, '%Y-%m-%d').date()
+            logs = logs.filter(DATE__gte=from_date)
+        except ValueError:
+            return Response({"error": "Invalid from_date format. Use YYYY-MM-DD"}, status=400)
+
+    if to_date_str:
+        try:
+            to_date = datetime.strptime(to_date_str, '%Y-%m-%d').date()
+            logs = logs.filter(DATE__lte=to_date)
+        except ValueError:
+            return Response({"error": "Invalid to_date format. Use YYYY-MM-DD"}, status=400)
+
+    # Calculate duration in hours for each log entry
+    logs = logs.annotate(
+        start_seconds=ExpressionWrapper(
+            ExtractHour('START_TIME') * 3600 + 
+            ExtractMinute('START_TIME') * 60 + 
+            ExtractSecond('START_TIME'),
+            output_field=FloatField()
+        ),
+        end_seconds=ExpressionWrapper(
+            ExtractHour('END_TIME') * 3600 + 
+            ExtractMinute('END_TIME') * 60 + 
+            ExtractSecond('END_TIME'),
+            output_field=FloatField()
+        ),
+        duration_hours=ExpressionWrapper(
+            (F('end_seconds') - F('start_seconds')) / 3600,
+            output_field=FloatField()
+        ),
+        reserve_numeric=Cast('RESERVE', output_field=IntegerField())
+    ).filter(
+        start_seconds__gte=30600,  # 8:30 AM (8.5 * 3600)
+        end_seconds__lte=70200     # 7:30 PM (19.5 * 3600)
+    ).exclude(
+        Q(start_seconds__gte=37800, end_seconds__lte=38400) |  # 10:30-10:40
+        Q(start_seconds__gte=48000, end_seconds__lte=50400) |  # 13:20-14:00
+        Q(start_seconds__gte=58800, end_seconds__lte=59400)    # 16:20-16:30
+    )
+
+    # Get distinct machine IDs
+    machine_ids = logs.order_by('MACHINE_ID').values_list('MACHINE_ID', flat=True).distinct()
+    
+    all_machine_reports = []
+    
+    for machine_id in machine_ids:
+        machine_logs = logs.filter(MACHINE_ID=machine_id)
+        
+        # Process data for this machine
+        try:
+            machine_report = process_machine_data(machine_logs, machine_id)
+            all_machine_reports.append(machine_report)
+        except Exception as e:
+            print(f"Error processing machine {machine_id}: {str(e)}")
+            continue
+    
+    return Response({
+        "allMachinesReport": all_machine_reports,
+        "totalMachines": len(all_machine_reports),
+        "from_date": from_date_str,
+        "to_date": to_date_str
+    })
 @api_view(['GET'])
 def operator_reports_all(request):
     """
@@ -1174,11 +1289,11 @@ from rest_framework.response import Response
 from .models import MachineLog, Operator
 
 MODES = {
-    0: 'Off',
-    1: 'Running',
-    2: 'Idle',
-    3: 'Maintenance',
-    # Add all your mode codes and descriptions here
+    1: "Sewing",
+    2: "Idle",
+    3: "No feeding",
+    4: "Meeting",
+    5: "Maintenance",
 }
 
 @api_view(['GET'])
@@ -1191,6 +1306,43 @@ def filter_logs(request):
     
     if line_number and line_number.lower() != 'all':
         queryset = queryset.filter(LINE_NUMB=line_number)
+    
+    if from_date:
+        queryset = queryset.filter(DATE__gte=from_date)
+    
+    if to_date:
+        queryset = queryset.filter(DATE__lte=to_date)
+    
+    # Prefetch operator data to optimize queries
+    logs = list(queryset)
+    operator_ids = set(log.OPERATOR_ID for log in logs if log.OPERATOR_ID != "0")
+    operators = Operator.objects.filter(rfid_card_no__in=operator_ids)
+    operator_map = {op.rfid_card_no: op.operator_name for op in operators}
+    
+    data = []
+    for log in logs:
+        log_data = {
+            **log.__dict__,
+            'mode_description': MODES.get(log.MODE, 'Unknown mode'),
+            'operator_name': operator_map.get(log.OPERATOR_ID, "") if log.OPERATOR_ID != "0" else ""
+        }
+        # Remove Django internal fields
+        log_data.pop('_state', None)
+        data.append(log_data)
+    
+    return Response(data)
+
+
+@api_view(['GET'])
+def filter_logs_by_machine_id(request):
+    machine_id = request.GET.get('machine_id')
+    from_date = request.GET.get('from_date')
+    to_date = request.GET.get('to_date')
+    
+    queryset = MachineLog.objects.all()
+    
+    if machine_id and machine_id.lower() != 'all':
+        queryset = queryset.filter(MACHINE_ID=machine_id)
     
     if from_date:
         queryset = queryset.filter(DATE__gte=from_date)
@@ -1232,3 +1384,255 @@ def get_line_numbers(request):
     
     line_numbers = sorted(list(queryset))
     return Response({"line_numbers": line_numbers})
+
+@api_view(['GET'])
+def get_machine_ids(request):
+    from_date = request.GET.get('from_date')
+    to_date = request.GET.get('to_date')
+    
+    if not from_date or not to_date:
+        return Response({"error": "Both from_date and to_date are required"}, status=400)
+    
+    queryset = MachineLog.objects.filter(
+        DATE__gte=from_date,
+        DATE__lte=to_date
+    ).values_list('MACHINE_ID', flat=True).distinct()
+    
+    machine_ids = sorted(list(queryset))
+    return Response({"machine_ids": machine_ids})
+
+
+
+
+
+
+
+# views.py
+from rest_framework.decorators import api_view
+from rest_framework.response import Response
+from django.db.models import Sum, Count, Avg
+from datetime import timedelta
+
+
+MODES = {
+    1: "Production",
+    2: "Ideal",
+    3: "No Feeding",
+    4: "Meeting",
+    5: "Maintenance"
+}
+
+@api_view(['GET'])
+def get_operator_ids(request):
+    from_date = request.GET.get('from_date')
+    to_date = request.GET.get('to_date')
+    
+    if not from_date or not to_date:
+        return Response({"error": "Both from_date and to_date are required"}, status=400)
+    
+    queryset = MachineLog.objects.filter(
+        DATE__gte=from_date,
+        DATE__lte=to_date
+    ).exclude(OPERATOR_ID="0").values_list('OPERATOR_ID', flat=True).distinct()
+    
+    operator_ids = sorted(list(queryset))
+    return Response({"operator_ids": operator_ids})
+
+@api_view(['GET'])
+def operator_report(request, operator_id):
+    from_date = request.GET.get('from_date')
+    to_date = request.GET.get('to_date')
+    
+    queryset = MachineLog.objects.filter(OPERATOR_ID=operator_id)
+    
+    if from_date:
+        queryset = queryset.filter(DATE__gte=from_date)
+    if to_date:
+        queryset = queryset.filter(DATE__lte=to_date)
+    
+    # Get operator name
+    operator_name = ""
+    try:
+        operator = Operator.objects.get(rfid_card_no=operator_id)
+        operator_name = operator.operator_name
+    except Operator.DoesNotExist:
+        pass
+    
+    # Calculate totals
+    total_hours = queryset.aggregate(
+        total_hours=Sum('NEEDLE_RUNTIME')
+    )['total_hours'] or 0
+    
+    productive_hours = queryset.filter(MODE=1).aggregate(
+        total=Sum('NEEDLE_RUNTIME')
+    )['total'] or 0
+    
+    no_feeding_hours = queryset.filter(MODE=3).aggregate(
+        total=Sum('NEEDLE_RUNTIME')
+    )['total'] or 0
+    
+    meeting_hours = queryset.filter(MODE=4).aggregate(
+        total=Sum('NEEDLE_RUNTIME')
+    )['total'] or 0
+    
+    maintenance_hours = queryset.filter(MODE=5).aggregate(
+        total=Sum('NEEDLE_RUNTIME')
+    )['total'] or 0
+    
+    idle_hours = queryset.filter(MODE=2).aggregate(
+        total=Sum('NEEDLE_RUNTIME')
+    )['total'] or 0
+    
+    total_stitch_count = queryset.aggregate(
+        total=Sum('STITCH_COUNT')
+    )['total'] or 0
+    
+    # Prepare daily data
+    daily_data = queryset.values('DATE').annotate(
+        sewing_hours=Sum('NEEDLE_RUNTIME', filter=operator.Q(MODE=1)),
+        no_feeding_hours=Sum('NEEDLE_RUNTIME', filter=operator.Q(MODE=3)),
+        meeting_hours=Sum('NEEDLE_RUNTIME', filter=operator.Q(MODE=4)),
+        maintenance_hours=Sum('NEEDLE_RUNTIME', filter=operator.Q(MODE=5)),
+        idle_hours=Sum('NEEDLE_RUNTIME', filter=operator.Q(MODE=2)),
+        total_hours=Sum('NEEDLE_RUNTIME'),
+        stitch_count=Sum('STITCH_COUNT'),
+        machine_count=Count('MACHINE_ID', distinct=True),
+        avg_sewing_speed=Avg('RESERVE')
+    ).order_by('DATE')
+    
+    # Format daily data for table
+    table_data = []
+    for day in daily_data:
+        day_total = day['total_hours'] or 0
+        pt_percentage = (day['sewing_hours'] / day_total * 100) if day_total > 0 else 0
+        npt_percentage = 100 - pt_percentage
+        
+        table_data.append({
+            "Date": day['DATE'],
+            "Sewing Hours (PT)": day['sewing_hours'] or 0,
+            "No Feeding Hours": day['no_feeding_hours'] or 0,
+            "Meeting Hours": day['meeting_hours'] or 0,
+            "Maintenance Hours": day['maintenance_hours'] or 0,
+            "Idle Hours": day['idle_hours'] or 0,
+            "Total Hours": day_total,
+            "Productive Time (PT) %": round(pt_percentage, 2),
+            "Non-Productive Time (NPT) %": round(npt_percentage, 2),
+            "Sewing Speed": round(day['avg_sewing_speed'] or 0, 2),
+            "Stitch Count": day['stitch_count'] or 0,
+            "Machine Count": day['machine_count'] or 0
+        })
+    
+    # Calculate percentages
+    pt_percentage = (productive_hours / total_hours * 100) if total_hours > 0 else 0
+    npt_percentage = 100 - pt_percentage
+    
+    response_data = {
+        "operator_id": operator_id,
+        "operator_name": operator_name,
+        "total_hours": round(total_hours, 2),
+        "total_productive_time": {
+            "hours": round(productive_hours, 2),
+            "percentage": round(pt_percentage, 2)
+        },
+        "total_non_productive_time": {
+            "hours": round(no_feeding_hours + meeting_hours + maintenance_hours + idle_hours, 2),
+            "percentage": round(npt_percentage, 2),
+            "breakdown": {
+                "no_feeding_hours": round(no_feeding_hours, 2),
+                "meeting_hours": round(meeting_hours, 2),
+                "maintenance_hours": round(maintenance_hours, 2),
+                "idle_hours": round(idle_hours, 2)
+            }
+        },
+        "total_stitch_count": total_stitch_count,
+        "table_data": table_data,
+        "all_table_data": table_data  # For filtering
+    }
+    
+    return Response(response_data)
+
+@api_view(['GET'])
+def all_operators_report(request):
+    from_date = request.GET.get('from_date')
+    to_date = request.GET.get('to_date')
+    
+    if not from_date or not to_date:
+        return Response({"error": "Both from_date and to_date are required"}, status=400)
+    
+    # Get all operator data
+    operators = MachineLog.objects.filter(
+        DATE__gte=from_date,
+        DATE__lte=to_date
+    ).exclude(OPERATOR_ID="0").values('OPERATOR_ID').distinct()
+    
+    all_operators_report = []
+    
+    for operator in operators:
+        operator_id = operator['OPERATOR_ID']
+        operator_data = MachineLog.objects.filter(
+            OPERATOR_ID=operator_id,
+            DATE__gte=from_date,
+            DATE__lte=to_date
+        )
+        
+        # Get operator name
+        operator_name = ""
+        try:
+            operator_obj = Operator.objects.get(rfid_card_no=operator_id)
+            operator_name = operator_obj.operator_name
+        except Operator.DoesNotExist:
+            pass
+        
+        # Calculate totals
+        total_hours = operator_data.aggregate(
+            total_hours=Sum('NEEDLE_RUNTIME')
+        )['total_hours'] or 0
+        
+        productive_hours = operator_data.filter(MODE=1).aggregate(
+            total=Sum('NEEDLE_RUNTIME')
+        )['total'] or 0
+        
+        pt_percentage = (productive_hours / total_hours * 100) if total_hours > 0 else 0
+        
+        all_operators_report.append({
+            "operator_id": operator_id,
+            "operator_name": operator_name,
+            "total_hours": round(total_hours, 2),
+            "productive_hours": round(productive_hours, 2),
+            "productive_percentage": round(pt_percentage, 2),
+            "stitch_count": operator_data.aggregate(
+                total=Sum('STITCH_COUNT')
+            )['total'] or 0,
+            "machine_count": operator_data.values('MACHINE_ID').distinct().count()
+        })
+    
+    return Response({"allOperatorsReport": all_operators_report})
+
+
+@api_view(['GET'])
+def get_consolidated_logs(request):
+    """
+    View to retrieve machine logs with optional date filtering.
+    """
+    from_date = request.query_params.get('from_date')
+    to_date = request.query_params.get('to_date')
+    
+    logs = MachineLog.objects.all()
+    
+    if from_date:
+        logs = logs.filter(DATE__gte=from_date)
+    if to_date:
+        logs = logs.filter(DATE__lte=to_date)
+    
+    logs = logs.order_by('-DATE')[:10000]
+    
+    serialized_logs = MachineLogSerializer(logs, many=True).data
+
+    return Response(serialized_logs)
+
+
+
+
+
+
+

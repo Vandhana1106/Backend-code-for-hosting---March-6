@@ -106,9 +106,9 @@ AUTH_PASSWORD_VALIDATORS = [
 
 # Internationalization
 LANGUAGE_CODE = 'en-us'
-TIME_ZONE = 'UTC'
-USE_I18N = True
-USE_TZ = True
+TIME_ZONE = 'Asia/Kolkata'  # or your local timezone
+USE_TZ = True  # this means Django uses timezone-aware datetimes
+
 
 # Static files (CSS, JavaScript, Images)
 STATIC_URL = 'static/'

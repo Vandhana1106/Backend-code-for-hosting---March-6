@@ -14,7 +14,7 @@ class MachineLogResource(resources.ModelResource):
 # Admin Configuration
 class MachineLogAdmin(ImportExportModelAdmin, admin.ModelAdmin):
     resource_class = MachineLogResource
-    list_display = ('MACHINE_ID', 'OPERATOR_ID', 'DATE', 'START_TIME', 'END_TIME', 'MODE')
+    list_display = ('MACHINE_ID', 'OPERATOR_ID', 'DATE', 'START_TIME', 'END_TIME', 'MODE','created_at')
     search_fields = ('MACHINE_ID', 'OPERATOR_ID', 'DATE')
     list_filter = ('DATE', 'MODE')
 
