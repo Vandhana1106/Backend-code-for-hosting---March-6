@@ -1,5 +1,3 @@
-
-
 # Standard library imports
 from datetime import datetime, timedelta, date
 
@@ -44,7 +42,7 @@ def log_machine_data(request):
     - Tx_LOGID: Now only saves the data without any condition.
     - Str_LOGID:
       - If > 1000, subtracts 1000 and stores only the adjusted value.
-      - Checks if the adjusted Log ID exists for the same Machine ID before saving.
+      - Checks if the adjusted Log ID exists for the same Machine ID and Date before saving.
     """
     data = request.data
     print("Processing machine log data...")
@@ -65,13 +63,17 @@ def log_machine_data(request):
 
     validated_data = serializer.validated_data
 
-    # Extract Log IDs and Machine ID
+    # Extract Log IDs, Machine ID, and Date
     tx_log_id = validated_data.get("Tx_LOGID")
     str_log_id = validated_data.get("Str_LOGID")
     machine_id = validated_data.get("MACHINE_ID")
+    log_date = validated_data.get("DATE")  # Assumes DATE is provided and validated in serializer
 
     if machine_id is None:
         return Response({"message": "MACHINE_ID is required"}, status=400)
+
+    if log_date is None:
+        return Response({"message": "DATE is required"}, status=400)
 
     # Str_LOGID Handling
     if str_log_id is not None:
@@ -83,11 +85,11 @@ def log_machine_data(request):
         if str_log_id > 1000:
             adjusted_str_log_id = str_log_id - 1000  # Subtract 1000
 
-            # Check if the adjusted STR Log ID exists for the same MACHINE_ID
-            if MachineLog.objects.filter(Str_LOGID=adjusted_str_log_id, MACHINE_ID=machine_id).exists():
+            # Check if the adjusted STR Log ID exists for the same MACHINE_ID and DATE
+            if MachineLog.objects.filter(Str_LOGID=adjusted_str_log_id, MACHINE_ID=machine_id, DATE=log_date).exists():
                 return Response({
                     "code": 200,
-                    "message": "STR Log ID already exists, data not saved"
+                    "message": "STR Log ID already exists for this machine and date, data not saved"
                 }, status=200)
 
             # Update validated data with adjusted Str_LOGID
@@ -97,9 +99,9 @@ def log_machine_data(request):
     MachineLog.objects.create(**validated_data)
 
     return Response({
-        "code": 201,
+        "code": 200,
         "message": "Log saved successfully",
-    }, status=201)
+    }, status=200)
 
 @api_view(['GET'])
 def get_machine_logs(request):
@@ -123,26 +125,6 @@ def get_machine_logs(request):
         log['mode_description'] = MODES.get(log.get('MODE'), 'Unknown mode')
 
     return Response(serialized_logs)
-
-# @api_view(['GET'])
-# def get_machine_logs(request):
-#     """
-#     View to retrieve all machine logs.
-
-#     Fetches all machine logs from the database and enriches them
-#     with mode descriptions from the MODES dictionary.
-
-#     Returns:
-#         Response containing serialized logs with mode descriptions
-#     """
-#     logs = MachineLog.objects.all()
-#     serialized_logs = MachineLogSerializer(logs, many=True).data
-
-#     # Add mode descriptions to the serialized logs
-#     for log in serialized_logs:
-#         log['mode_description'] = MODES.get(log.get('MODE'), 'Unknown mode')
-
-#     return Response(serialized_logs)
 
 @api_view(['POST'])
 def user_login(request):
@@ -721,15 +703,18 @@ def process_line_data(logs, line_number):
 @api_view(['GET'])
 def line_reports(request, line_number):
     try:
+        # Get valid operator IDs from Operator model
+        valid_operators = Operator.objects.values_list('rfid_card_no', flat=True)
+        
         # Handle "all" case - convert line_number to string first
         line_number_str = str(line_number)
         if line_number_str.lower() == 'all':
-            logs = MachineLog.objects.all()
+            logs = MachineLog.objects.filter(OPERATOR_ID__in=valid_operators)
             all_lines = True
         else:
             # Convert back to integer if it's a numeric line number
             line_number = int(line_number_str)
-            logs = MachineLog.objects.filter(LINE_NUMB=line_number)
+            logs = MachineLog.objects.filter(LINE_NUMB=line_number, OPERATOR_ID__in=valid_operators)
             all_lines = False
     except MachineLog.DoesNotExist:
         return Response({"error": "Data not found"}, status=404)
@@ -770,10 +755,10 @@ def line_reports(request, line_number):
         reserve_numeric=Cast('RESERVE', output_field=IntegerField())
     )
 
-    # Filter for working hours (8:30 AM to 7:30 PM)
+    # Filter for working hours (8:25 AM to 7:35 PM)
     logs = logs.filter(
-        start_seconds__gte=30600,  # 8:30 AM (8.5 * 3600)
-        end_seconds__lte=70200     # 7:30 PM (19.5 * 3600)
+        start_seconds__gte=30300,  # 8:25 AM (8.416667 * 3600)
+        end_seconds__lte=70500     # 7:35 PM (19.583333 * 3600)
     )
 
     # Exclude specific break periods (entirely within these ranges)
@@ -1015,13 +1000,16 @@ def process_machine_data(logs, machine_id):
 @api_view(['GET'])
 def machine_reports(request, machine_id):
     try:
+        # Get valid operator IDs from Operator model
+        valid_operators = Operator.objects.values_list('rfid_card_no', flat=True)
+        
         # Handle "all" case - convert machine_id to string first
         machine_id_str = str(machine_id)
         if machine_id_str.lower() == 'all':
-            logs = MachineLog.objects.all()
+            logs = MachineLog.objects.filter(OPERATOR_ID__in=valid_operators)
             all_machines = True
         else:
-            logs = MachineLog.objects.filter(MACHINE_ID=machine_id)
+            logs = MachineLog.objects.filter(MACHINE_ID=machine_id, OPERATOR_ID__in=valid_operators)
             all_machines = False
     except MachineLog.DoesNotExist:
         return Response({"error": "Data not found"}, status=404)
@@ -1062,10 +1050,10 @@ def machine_reports(request, machine_id):
         reserve_numeric=Cast('RESERVE', output_field=IntegerField())
     )
 
-    # Filter for working hours (8:30 AM to 7:30 PM)
+    # Filter for working hours (8:25 AM to 7:35 PM)
     logs = logs.filter(
-        start_seconds__gte=30600,  # 8:30 AM (8.5 * 3600)
-        end_seconds__lte=70200     # 7:30 PM (19.5 * 3600)
+        start_seconds__gte=30300,  # 8:25 AM (8.416667 * 3600)
+        end_seconds__lte=70500     # 7:35 PM (19.583333 * 3600)
     )
 
     # Exclude specific break periods (entirely within these ranges)
@@ -1102,7 +1090,9 @@ def machine_reports(request, machine_id):
 @api_view(['GET'])
 def all_machines_report(request):
     try:
-        logs = MachineLog.objects.all()
+        # Get valid operator IDs from Operator model
+        valid_operators = Operator.objects.values_list('rfid_card_no', flat=True)
+        logs = MachineLog.objects.filter(OPERATOR_ID__in=valid_operators)
     except Exception as e:
         return Response({"error": str(e)}, status=500)
 
@@ -1145,8 +1135,8 @@ def all_machines_report(request):
         ),
         reserve_numeric=Cast('RESERVE', output_field=IntegerField())
     ).filter(
-        start_seconds__gte=30600,  # 8:30 AM (8.5 * 3600)
-        end_seconds__lte=70200     # 7:30 PM (19.5 * 3600)
+        start_seconds__gte=30300,  # 8:25 AM (8.416667 * 3600)
+        end_seconds__lte=70500     # 7:35 PM (19.583333 * 3600)
     ).exclude(
         Q(start_seconds__gte=37800, end_seconds__lte=38400) |  # 10:30-10:40
         Q(start_seconds__gte=48000, end_seconds__lte=50400) |  # 13:20-14:00
@@ -1415,11 +1405,11 @@ from datetime import timedelta
 
 
 MODES = {
-    1: "Production",
-    2: "Ideal",
-    3: "No Feeding",
+    1: "Sewing",
+    2: "Idle",
+    3: "No feeding",
     4: "Meeting",
-    5: "Maintenance"
+    5: "Maintenance",
 }
 
 @api_view(['GET'])
