@@ -6,11 +6,11 @@ class MachineLog(models.Model):
     MACHINE_ID = models.IntegerField()
     LINE_NUMB = models.IntegerField()
     OPERATOR_ID = models.CharField(max_length=30)
-    DATE = models.DateField()
+    DATE = models.DateField(db_index=True)  # Index added
     START_TIME = models.TimeField()
     END_TIME = models.TimeField()
     
-    MODE = models.IntegerField()
+    MODE = models.IntegerField(db_index=True)  # Index added
     STITCH_COUNT = models.IntegerField()
     NEEDLE_RUNTIME = models.FloatField()
     NEEDLE_STOPTIME = models.FloatField()
@@ -18,10 +18,14 @@ class MachineLog(models.Model):
     Str_LOGID = models.IntegerField()
     DEVICE_ID = models.IntegerField()
     RESERVE = models.TextField(blank=True, null=True)
-    created_at = models.DateTimeField(auto_now_add=True)
+    created_at = models.DateTimeField(auto_now_add=True, db_index=True)  # Index added
 
     class Meta:
-        pass
+        indexes = [
+            models.Index(fields=['DATE']),
+            models.Index(fields=['created_at']),
+            models.Index(fields=['MODE']),
+        ]
 
 class DuplicateLog(models.Model):
     payload = models.JSONField()

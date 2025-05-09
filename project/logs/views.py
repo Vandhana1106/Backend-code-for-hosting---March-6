@@ -103,6 +103,11 @@ def log_machine_data(request):
         "message": "Log saved successfully",
     }, status=200)
 
+from rest_framework.decorators import api_view
+from rest_framework.response import Response
+from .models import MachineLog
+from .serializers import MachineLogSerializer
+
 @api_view(['GET'])
 def get_machine_logs(request):
     """
@@ -120,11 +125,12 @@ def get_machine_logs(request):
     
     serialized_logs = MachineLogSerializer(logs, many=True).data
 
-    # Add mode descriptions
-    for log in serialized_logs:
-        log['mode_description'] = MODES.get(log.get('MODE'), 'Unknown mode')
+    # Add indexing (starting from 1)
+    for idx, log in enumerate(serialized_logs, start=1):
+        log['index'] = idx
 
     return Response(serialized_logs)
+
 
 @api_view(['POST'])
 def user_login(request):
@@ -1599,6 +1605,11 @@ def all_operators_report(request):
     return Response({"allOperatorsReport": all_operators_report})
 
 
+from rest_framework.decorators import api_view
+from rest_framework.response import Response
+from .models import MachineLog
+from .serializers import MachineLogSerializer
+
 @api_view(['GET'])
 def get_consolidated_logs(request):
     """
@@ -1618,7 +1629,12 @@ def get_consolidated_logs(request):
     
     serialized_logs = MachineLogSerializer(logs, many=True).data
 
+    # Add indexing (1, 2, 3...)
+    for idx, log in enumerate(serialized_logs, start=1):
+        log['index'] = idx
+
     return Response(serialized_logs)
+
 
 
 
