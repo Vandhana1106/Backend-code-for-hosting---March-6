@@ -20,3 +20,15 @@ class MachineLogAdmin(ImportExportModelAdmin, admin.ModelAdmin):
 
 # Register the model with custom admin
 admin.site.register(MachineLog, MachineLogAdmin)
+
+
+# admin.py
+
+from django.contrib import admin
+from .models import UserMachineLog
+
+@admin.register(UserMachineLog)
+class UserMachineLogAdmin(admin.ModelAdmin):
+    list_display = ['MACHINE_ID', 'OPERATOR_ID', 'DATE', 'START_TIME', 'END_TIME']
+    search_fields = ['MACHINE_ID', 'OPERATOR_ID']
+    list_filter = ['DATE', 'MODE']

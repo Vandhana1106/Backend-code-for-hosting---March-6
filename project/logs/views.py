@@ -22,8 +22,9 @@ from rest_framework.views import APIView
 from rest_framework import status
 
 # Local application imports
-from .models import MachineLog, DuplicateLog, ModeMessage, Operator
-from .serializers import MachineLogSerializer
+from .models import MachineLog, DuplicateLog, ModeMessage, Operator, AdminUser, User
+from .serializers import MachineLogSerializer, AdminUserSerializer, UserSerializer
+from .views_user import register_user
 
 # Dictionary to map mode numbers to descriptions
 MODES = {
@@ -32,20 +33,12 @@ MODES = {
     3: "No feeding",
     4: "Meeting",
     5: "Maintenance",
+    6: "new mode description",
 }
 
 @api_view(['POST'])
 def log_machine_data(request):
-    """
-    View to handle machine data logging with updated Tx Log ID and Str Log ID conditions.
     
-    - Tx_LOGID:
-      - If > 1000, subtracts 1000 and stores only the adjusted value.
-      - Checks if the adjusted Log ID exists for the same Machine ID, Date, Start Time, and End Time before saving.
-    - Str_LOGID:
-      - If > 1000, subtracts 1000 and stores only the adjusted value.
-      - Checks if the adjusted Log ID exists for the same Machine ID, Date, Start Time, and End Time before saving.
-    """
     data = request.data
     print("Processing machine log data...")
 
@@ -108,8 +101,7 @@ def log_machine_data(request):
                     "message": "Log saved successfully"
                 }, status=200)
             
-            # Update validated data with adjusted Tx_LOGID
-            validated_data["Tx_LOGID"] = adjusted_tx_log_id
+            # Keep the original Tx_LOGID value (do not subtract 1000)
 
     # Str_LOGID Handling
     if str_log_id is not None:
@@ -200,6 +192,372 @@ def user_login(request):
         return Response({"message": "Login successful", "token": token.key}, status=200)
     else:
         return Response({"message": "Invalid credentials"}, status=400)
+
+@api_view(['POST'])
+def admin_login(request):
+    """
+    View to handle admin user login with token-based authentication.
+    
+    Validates and processes incoming admin login data:
+    - Authenticates the admin user against the AdminUser model
+    - Returns a token if authentication is successful
+    
+    Returns:
+        Response with status and message
+    """
+    data = request.data
+    username = data.get('username')
+    password = data.get('password')
+
+    if not username or not password:
+        return Response({"message": "Username and password are required"}, status=400)
+
+    # Check against AdminUser model directly
+    try:
+        admin_user = AdminUser.objects.get(username=username, password=password, is_active=True)
+        # Authentication successful, generate token
+        token, created = Token.objects.get_or_create(user=admin_user)
+        return Response({"message": "Admin login successful", "token": token.key, "user_type": "admin"}, status=200)
+    except AdminUser.DoesNotExist:
+        return Response({"message": "Invalid admin credentials"}, status=400)
+
+@api_view(['POST'])
+def register_admin_user(request):
+    """
+    View to register a new admin user.
+    Only existing authenticated users can create new admin users.
+    
+    Returns:
+        Response with status and message
+    """
+    # Ensure request is authenticated
+    if not request.user.is_authenticated:
+        return Response({"message": "Authentication required"}, status=401)
+    
+    data = request.data
+    serializer = AdminUserSerializer(data=data)
+    
+    if serializer.is_valid():
+        serializer.save()
+        return Response({
+            "message": "Admin user created successfully", 
+            "user": serializer.data
+        }, status=201)
+    
+    return Response({"message": "Validation failed", "errors": serializer.errors}, status=400)
+
+@api_view(['GET'])
+def get_admin_machine_logs(request):
+    """
+    View for admin users to retrieve machine logs with optional date filtering.
+    Functionally identical to get_machine_logs but with a different endpoint for admin users.
+    """
+    from_date = request.query_params.get('from_date')
+    to_date = request.query_params.get('to_date')
+    
+    logs = MachineLog.objects.all().order_by('-created_at')
+    
+    if from_date:
+        logs = logs.filter(DATE__gte=from_date)
+    if to_date:
+        logs = logs.filter(DATE__lte=to_date)
+    
+    serialized_logs = MachineLogSerializer(logs, many=True).data
+
+    # Add indexing (starting from 1)
+    for idx, log in enumerate(serialized_logs, start=1):
+        log['index'] = idx
+
+    return Response(serialized_logs)
+
+@api_view(['POST'])
+def admin_log_machine_data(request):
+    """
+    View for admin users to handle machine data logging.
+    Functionally identical to log_machine_data but with a different endpoint for admin users.
+    """
+    data = request.data
+    print("Processing admin machine log data...")
+
+    # Validate mode
+    try:
+        mode = int(data.get("MODE"))
+    except (TypeError, ValueError):
+        return Response({"message": "Invalid mode format"}, status=400)
+
+    if mode not in MODES:
+        return Response({"message": f"Invalid mode: {mode}. Valid modes are {list(MODES.keys())}"}, status=400)
+
+    # Validate serializer
+    serializer = MachineLogSerializer(data=data)
+    if not serializer.is_valid():
+        return Response({"message": "Validation failed", "errors": serializer.errors}, status=400)
+
+    validated_data = serializer.validated_data
+
+    # Extract Log IDs, Machine ID, Date, Start Time and End Time
+    tx_log_id = validated_data.get("Tx_LOGID")
+    str_log_id = validated_data.get("Str_LOGID")
+    machine_id = validated_data.get("MACHINE_ID")
+    log_date = validated_data.get("DATE")  # Assumes DATE is provided and validated in serializer
+    start_time = validated_data.get("START_TIME")
+    end_time = validated_data.get("END_TIME")
+
+    if machine_id is None:
+        return Response({"message": "MACHINE_ID is required"}, status=400)
+
+    if log_date is None:
+        return Response({"message": "DATE is required"}, status=400)
+        
+    if start_time is None:
+        return Response({"message": "START_TIME is required"}, status=400)
+        
+    if end_time is None:
+        return Response({"message": "END_TIME is required"}, status=400)
+    
+    # Tx_LOGID Handling
+    if tx_log_id is not None:
+        try:
+            tx_log_id = int(tx_log_id)  # Convert to integer
+        except ValueError:
+            return Response({"message": "Invalid Tx_LOGID format"}, status=400)
+        
+        if tx_log_id > 1000:
+            adjusted_tx_log_id = tx_log_id - 1000  # Subtract 1000
+            
+            # Check if the adjusted TX Log ID exists for the same MACHINE_ID, DATE, START_TIME, and END_TIME
+            if MachineLog.objects.filter(
+                Tx_LOGID=adjusted_tx_log_id,
+                MACHINE_ID=machine_id,
+                DATE=log_date,
+                START_TIME=start_time,
+                END_TIME=end_time
+            ).exists():
+                return Response({
+                    "code": 200,
+                    "message": "Log saved successfully"
+                }, status=200)
+            
+            # Keep the original Tx_LOGID value (do not subtract 1000)
+
+    # Str_LOGID Handling
+    if str_log_id is not None:
+        try:
+            str_log_id = int(str_log_id)  # Convert to integer
+        except ValueError:
+            return Response({"message": "Invalid Str_LOGID format"}, status=400)
+
+        if str_log_id > 1000:
+            adjusted_str_log_id = str_log_id - 1000  # Subtract 1000
+
+            # Check if the adjusted STR Log ID exists for the same MACHINE_ID, DATE, START_TIME, and END_TIME
+            if MachineLog.objects.filter(
+                Str_LOGID=adjusted_str_log_id,
+                MACHINE_ID=machine_id,
+                DATE=log_date,
+                START_TIME=start_time,
+                END_TIME=end_time
+            ).exists():
+                return Response({
+                    "code": 200,
+                    "message": "Log saved successfully"
+                }, status=200)
+
+            # Update validated data with adjusted Str_LOGID
+            validated_data["Str_LOGID"] = adjusted_str_log_id
+
+    # Save the log data
+    MachineLog.objects.create(**validated_data)
+
+    return Response({
+        "code": 200,
+        "message": "Log saved successfully by admin",
+    }, status=200)
+
+@api_view(['POST'])
+def admin_login(request):
+    """
+    View to handle admin user login with token-based authentication.
+    
+    Validates and processes incoming admin login data:
+    - Authenticates the admin user against the AdminUser model
+    - Returns a token if authentication is successful
+    
+    Returns:
+        Response with status and message
+    """
+    data = request.data
+    username = data.get('username')
+    password = data.get('password')
+
+    if not username or not password:
+        return Response({"message": "Username and password are required"}, status=400)
+
+    # Check against AdminUser model directly
+    try:
+        admin_user = AdminUser.objects.get(username=username, password=password, is_active=True)
+        # Generate a token (using Django's built-in user for token creation)
+        user = authenticate(username=username, password=password)
+        if user:
+            token, created = Token.objects.get_or_create(user=user)
+            return Response({"message": "Admin login successful", "token": token.key, "user_type": "admin"}, status=200)
+        else:
+            return Response({"message": "Token generation failed"}, status=500)
+    except AdminUser.DoesNotExist:
+        return Response({"message": "Invalid admin credentials"}, status=400)
+
+@api_view(['POST'])
+def register_admin_user(request):
+    """
+    View to register a new admin user.
+    Only existing authenticated users can create new admin users.
+    
+    Returns:
+        Response with status and message
+    """
+    # Ensure request is authenticated
+    if not request.user.is_authenticated:
+        return Response({"message": "Authentication required"}, status=401)
+    
+    data = request.data
+    serializer = AdminUserSerializer(data=data)
+    
+    if serializer.is_valid():
+        serializer.save()
+        return Response({
+            "message": "Admin user created successfully", 
+            "user": serializer.data
+        }, status=201)
+    
+    return Response({"message": "Validation failed", "errors": serializer.errors}, status=400)
+
+@api_view(['GET'])
+def get_admin_machine_logs(request):
+    """
+    View for admin users to retrieve machine logs with optional date filtering.
+    Functionally identical to get_machine_logs but with a different endpoint for admin users.
+    """
+    from_date = request.query_params.get('from_date')
+    to_date = request.query_params.get('to_date')
+    
+    logs = MachineLog.objects.all().order_by('-created_at')
+    
+    if from_date:
+        logs = logs.filter(DATE__gte=from_date)
+    if to_date:
+        logs = logs.filter(DATE__lte=to_date)
+    
+    serialized_logs = MachineLogSerializer(logs, many=True).data
+
+    # Add indexing (starting from 1)
+    for idx, log in enumerate(serialized_logs, start=1):
+        log['index'] = idx
+
+    return Response(serialized_logs)
+
+@api_view(['POST'])
+def admin_log_machine_data(request):
+    """
+    View for admin users to handle machine data logging.
+    Functionally identical to log_machine_data but with a different endpoint for admin users.
+    """
+    data = request.data
+    print("Processing admin machine log data...")
+
+    # Validate mode
+    try:
+        mode = int(data.get("MODE"))
+    except (TypeError, ValueError):
+        return Response({"message": "Invalid mode format"}, status=400)
+
+    if mode not in MODES:
+        return Response({"message": f"Invalid mode: {mode}. Valid modes are {list(MODES.keys())}"}, status=400)
+
+    # Validate serializer
+    serializer = MachineLogSerializer(data=data)
+    if not serializer.is_valid():
+        return Response({"message": "Validation failed", "errors": serializer.errors}, status=400)
+
+    validated_data = serializer.validated_data
+
+    # Extract Log IDs, Machine ID, Date, Start Time and End Time
+    tx_log_id = validated_data.get("Tx_LOGID")
+    str_log_id = validated_data.get("Str_LOGID")
+    machine_id = validated_data.get("MACHINE_ID")
+    log_date = validated_data.get("DATE")  # Assumes DATE is provided and validated in serializer
+    start_time = validated_data.get("START_TIME")
+    end_time = validated_data.get("END_TIME")
+
+    if machine_id is None:
+        return Response({"message": "MACHINE_ID is required"}, status=400)
+
+    if log_date is None:
+        return Response({"message": "DATE is required"}, status=400)
+        
+    if start_time is None:
+        return Response({"message": "START_TIME is required"}, status=400)
+        
+    if end_time is None:
+        return Response({"message": "END_TIME is required"}, status=400)
+    
+    # Tx_LOGID Handling
+    if tx_log_id is not None:
+        try:
+            tx_log_id = int(tx_log_id)  # Convert to integer
+        except ValueError:
+            return Response({"message": "Invalid Tx_LOGID format"}, status=400)
+        
+        if tx_log_id > 1000:
+            adjusted_tx_log_id = tx_log_id - 1000  # Subtract 1000
+            
+            # Check if the adjusted TX Log ID exists for the same MACHINE_ID, DATE, START_TIME, and END_TIME
+            if MachineLog.objects.filter(
+                Tx_LOGID=adjusted_tx_log_id,
+                MACHINE_ID=machine_id,
+                DATE=log_date,
+                START_TIME=start_time,
+                END_TIME=end_time
+            ).exists():
+                return Response({
+                    "code": 200,
+                    "message": "Log saved successfully"
+                }, status=200)
+            
+            # Keep the original Tx_LOGID value (do not subtract 1000)
+
+    # Str_LOGID Handling
+    if str_log_id is not None:
+        try:
+            str_log_id = int(str_log_id)  # Convert to integer
+        except ValueError:
+            return Response({"message": "Invalid Str_LOGID format"}, status=400)
+
+        if str_log_id > 1000:
+            adjusted_str_log_id = str_log_id - 1000  # Subtract 1000
+
+            # Check if the adjusted STR Log ID exists for the same MACHINE_ID, DATE, START_TIME, and END_TIME
+            if MachineLog.objects.filter(
+                Str_LOGID=adjusted_str_log_id,
+                MACHINE_ID=machine_id,
+                DATE=log_date,
+                START_TIME=start_time,
+                END_TIME=end_time
+            ).exists():
+                return Response({
+                    "code": 200,
+                    "message": "Log saved successfully"
+                }, status=200)
+
+            # Update validated data with adjusted Str_LOGID
+            validated_data["Str_LOGID"] = adjusted_str_log_id
+
+    # Save the log data
+    MachineLog.objects.create(**validated_data)
+
+    return Response({
+        "code": 200,
+        "message": "Log saved successfully by admin",
+    }, status=200)
 
 @api_view(['GET'])
 def get_underperforming_operators(request):
@@ -991,155 +1349,6 @@ def line_reports(request, line_number):
         line_report = process_line_data(logs, str(line_number))
         return Response(line_report)
 
-from django.db.models import Sum, Case, When, Value, FloatField, F, ExpressionWrapper, Q, IntegerField, Avg, Count
-from django.db.models.functions import ExtractHour, ExtractMinute, ExtractSecond, Cast
-from rest_framework.decorators import api_view
-from rest_framework.response import Response
-from datetime import datetime
-from .models import MachineLog
-
-def process_machine_data(logs, machine_id):
-    """Helper function to process data for a single machine"""
-    # Calculate total working days and available hours (11 hours per day)
-    distinct_dates = logs.dates('DATE', 'day')
-    total_working_days = distinct_dates.count()
-    total_available_hours = total_working_days * 11
-
-    # Get aggregated data by date
-    daily_data = logs.values('DATE').annotate(
-        sewing_hours=Sum(Case(
-            When(MODE=1, then=F('duration_hours')),
-            default=Value(0),
-            output_field=FloatField()
-        )),
-        no_feeding_hours=Sum(Case(
-            When(MODE=3, then=F('duration_hours')),
-            default=Value(0),
-            output_field=FloatField()
-        )),
-        meeting_hours=Sum(Case(
-            When(MODE=4, then=F('duration_hours')),
-            default=Value(0),
-            output_field=FloatField()
-        )),
-        maintenance_hours=Sum(Case(
-            When(MODE=5, then=F('duration_hours')),
-            default=Value(0),
-            output_field=FloatField()
-        )),
-        idle_hours=Sum(Case(
-            When(MODE=2, then=F('duration_hours')),
-            default=Value(0),
-            output_field=FloatField()
-        )),
-        total_stitch_count=Sum('STITCH_COUNT'),
-        sewing_speed=Avg(Case(
-            When(reserve_numeric__gt=0, then=F('reserve_numeric')),
-            default=Value(0),
-            output_field=FloatField()
-        )),
-        needle_runtime=Sum('NEEDLE_RUNTIME')
-    ).order_by('DATE')
-
-    # Calculate totals
-    total_sewing_hours = 0
-    total_no_feeding_hours = 0
-    total_meeting_hours = 0
-    total_maintenance_hours = 0
-    total_idle_hours = 0
-    total_stitch_count = 0
-    total_needle_runtime = 0
-    total_hours = 0
-
-    formatted_table_data = []
-    for data in daily_data:
-        sewing_hours = data['sewing_hours'] or 0
-        no_feeding_hours = data['no_feeding_hours'] or 0
-        meeting_hours = data['meeting_hours'] or 0
-        maintenance_hours = data['maintenance_hours'] or 0
-        idle_hours = data['idle_hours'] or 0
-        
-        # Calculate PT and NPT
-        productive_time = sewing_hours
-        non_productive_time = no_feeding_hours + meeting_hours + maintenance_hours + idle_hours
-        daily_total_hours = productive_time + non_productive_time
-        
-        # Accumulate to total hours
-        total_hours += daily_total_hours
-        
-        # Calculate percentages
-        productive_time_percentage = (productive_time / daily_total_hours * 100) if daily_total_hours > 0 else 0
-        non_productive_time_percentage = (non_productive_time / daily_total_hours * 100) if daily_total_hours > 0 else 0
-        
-        formatted_table_data.append({
-            'Date': str(data['DATE']),
-            'Sewing Hours (PT)': round(sewing_hours, 2),
-            'No Feeding Hours': round(no_feeding_hours, 2),
-            'Meeting Hours': round(meeting_hours, 2),
-            'Maintenance Hours': round(maintenance_hours, 2),
-            'Idle Hours': round(idle_hours, 2),
-            'Total Hours': round(daily_total_hours, 2),
-            'Productive Time (PT) %': round(productive_time_percentage, 2),
-            'Non-Productive Time (NPT) %': round(non_productive_time_percentage, 2),
-            'Sewing Speed': round(data['sewing_speed'], 2),
-            'Stitch Count': data['total_stitch_count'],
-            'Needle Runtime': data['needle_runtime'],
-            'Machine ID': machine_id
-        })
-
-        # Accumulate totals
-        total_sewing_hours += sewing_hours
-        total_no_feeding_hours += no_feeding_hours
-        total_meeting_hours += meeting_hours
-        total_maintenance_hours += maintenance_hours
-        total_idle_hours += idle_hours
-        total_stitch_count += data['total_stitch_count'] or 0
-        total_needle_runtime += data['needle_runtime'] or 0
-
-    # Calculate overall PT and NPT
-    total_productive_time = total_sewing_hours
-    total_non_productive_time = (
-        total_no_feeding_hours + 
-        total_meeting_hours + 
-        total_maintenance_hours + 
-        total_idle_hours
-    )
-    
-    # Calculate overall percentages
-    total_productive_percentage = (total_productive_time / total_hours * 100) if total_hours > 0 else 0
-    total_non_productive_percentage = (total_non_productive_time / total_hours * 100) if total_hours > 0 else 0
-
-    # Calculate average sewing speed
-    valid_speed_logs = logs.filter(reserve_numeric__gt=0)
-    average_sewing_speed = valid_speed_logs.aggregate(
-        avg_speed=Avg('reserve_numeric')
-    )['avg_speed'] or 0
-
-    return {
-        "machineId": machine_id,
-        "totalAvailableHours": total_available_hours,
-        "totalWorkingDays": total_working_days,
-        "totalHours": round(total_hours, 2),
-        "totalProductiveTime": {
-            "hours": round(total_productive_time, 2),
-            "percentage": round(total_productive_percentage, 2)
-        },
-        "totalNonProductiveTime": {
-            "hours": round(total_non_productive_time, 2),
-            "percentage": round(total_non_productive_percentage, 2),
-            "breakdown": {
-                "noFeedingHours": round(total_no_feeding_hours, 2),
-                "meetingHours": round(total_meeting_hours, 2),
-                "maintenanceHours": round(total_maintenance_hours, 2),
-                "idleHours": round(total_idle_hours, 2)
-            }
-        },
-        "totalStitchCount": total_stitch_count,
-        "averageSewingSpeed": round(average_sewing_speed, 2),
-        "totalNeedleRuntime": round(total_needle_runtime, 2),
-        "tableData": formatted_table_data
-    }
-
 @api_view(['GET'])
 def machine_reports(request, machine_id):
     try:
@@ -1427,6 +1636,7 @@ MODES = {
     3: "No feeding",
     4: "Meeting",
     5: "Maintenance",
+    6: "new mode description",
 }
 
 @api_view(['GET'])
@@ -1553,6 +1763,7 @@ MODES = {
     3: "No feeding",
     4: "Meeting",
     5: "Maintenance",
+    6: "new mode description",
 }
 
 @api_view(['GET'])
@@ -1771,7 +1982,8 @@ MODES = {
     2: "Idle",
     3: "Meeting",
     4: "No Feeding",
-    5: "Maintenance"
+    5: "Maintenance",
+    6: "new mode description"
 }
 
 @api_view(['GET'])
@@ -1916,3 +2128,158 @@ def get_consolidated_logs(request):
     }
 
     return Response(response_data)
+
+
+
+
+
+
+
+
+
+
+
+# views.py
+
+from .models import UserMachineLog, Operator, ModeMessage
+from .serializers import UserMachineLogSerializer
+from rest_framework.response import Response
+from rest_framework.decorators import api_view
+
+@api_view(['POST'])
+def log_user_machine_data(request):
+    data = request.data
+    print("Processing user machine log data...")
+
+    # Validate mode
+    try:
+        mode = int(data.get("MODE"))
+    except (TypeError, ValueError):
+        return Response({"message": "Invalid mode format"}, status=400)
+
+    if mode not in MODES:
+        return Response({"message": f"Invalid mode: {mode}. Valid modes are {list(MODES.keys())}"}, status=400)
+
+    # Validate serializer
+    serializer = UserMachineLogSerializer(data=data)
+    if not serializer.is_valid():
+        return Response({"message": "Validation failed", "errors": serializer.errors}, status=400)
+
+    validated_data = serializer.validated_data
+
+    # Extract Log IDs, Machine ID, Date, Start Time and End Time
+    tx_log_id = validated_data.get("Tx_LOGID")
+    str_log_id = validated_data.get("Str_LOGID")
+    machine_id = validated_data.get("MACHINE_ID")
+    log_date = validated_data.get("DATE")
+    start_time = validated_data.get("START_TIME")
+    end_time = validated_data.get("END_TIME")
+
+    if machine_id is None:
+        return Response({"message": "MACHINE_ID is required"}, status=400)
+
+    if log_date is None:
+        return Response({"message": "DATE is required"}, status=400)
+
+    if start_time is None:
+        return Response({"message": "START_TIME is required"}, status=400)
+
+    if end_time is None:
+        return Response({"message": "END_TIME is required"}, status=400)
+
+    # Tx_LOGID Handling
+    if tx_log_id is not None:
+        try:
+            tx_log_id = int(tx_log_id)
+        except ValueError:
+            return Response({"message": "Invalid Tx_LOGID format"}, status=400)
+
+        if tx_log_id > 1000:
+            adjusted_tx_log_id = tx_log_id - 1000
+            if UserMachineLog.objects.filter(
+                Tx_LOGID=adjusted_tx_log_id,
+                MACHINE_ID=machine_id,
+                DATE=log_date,
+                START_TIME=start_time,
+                END_TIME=end_time
+            ).exists():
+                return Response({
+                    "code": 200,
+                    "message": "Log saved successfully"
+                }, status=200)
+            # Continue with original tx_log_id (don't save adjusted value)
+
+    # Str_LOGID Handling
+    if str_log_id is not None:
+        try:
+            str_log_id = int(str_log_id)
+        except ValueError:
+            return Response({"message": "Invalid Str_LOGID format"}, status=400)
+
+        if str_log_id > 1000:
+            adjusted_str_log_id = str_log_id - 1000
+            if UserMachineLog.objects.filter(
+                Str_LOGID=adjusted_str_log_id,
+                MACHINE_ID=machine_id,
+                DATE=log_date,
+                START_TIME=start_time,
+                END_TIME=end_time
+            ).exists():
+                return Response({
+                    "code": 200,
+                    "message": "Log saved successfully"
+                }, status=200)
+            
+            # Replace with adjusted value for saving
+            validated_data["Str_LOGID"] = adjusted_str_log_id
+
+    # Save the log data with original Tx_LOGID (if >1000) and adjusted Str_LOGID (if >1000)
+    UserMachineLog.objects.create(**validated_data)
+
+    return Response({
+        "code": 200,
+        "message": "Log saved successfully"
+    }, status=200)
+
+@api_view(['GET'])
+def get_user_machine_logs(request):
+    """
+    View to fetch user machine logs with pagination and filtering
+    """
+    from_date = request.query_params.get('from_date')
+    to_date = request.query_params.get('to_date')
+    
+    print(f"Fetching user machine logs from {from_date} to {to_date}")
+    
+    logs = UserMachineLog.objects.all().order_by('-created_at')
+    
+    if from_date:
+        logs = logs.filter(DATE__gte=from_date)
+    if to_date:
+        logs = logs.filter(DATE__lte=to_date)
+
+    # Prefetch operator data to optimize queries and prevent N+1 queries
+    operator_ids = set(log.OPERATOR_ID for log in logs if log.OPERATOR_ID)
+    operators = {op.rfid_card_no: op.operator_name for op in Operator.objects.filter(rfid_card_no__in=operator_ids)}
+    
+    print(f"Found {logs.count()} logs with {len(operators)} operators")
+    
+    serialized_logs = UserMachineLogSerializer(logs, many=True).data
+    
+    # Add index to each log
+    for idx, log in enumerate(serialized_logs, start=1):
+        log['index'] = idx
+        
+        # Double-check operator_name and mode_description
+        if not log.get('operator_name') and log.get('OPERATOR_ID') and log['OPERATOR_ID'] != '0':
+            operator_name = operators.get(log['OPERATOR_ID'])
+            if operator_name:
+                log['operator_name'] = operator_name
+        
+        # Ensure mode_description is set
+        if not log.get('mode_description') and log.get('MODE') is not None:
+            log['mode_description'] = MODES.get(log['MODE'], f"Mode {log['MODE']}")
+
+    print(f"Returning {len(serialized_logs)} serialized logs")
+    return Response(serialized_logs)
+
