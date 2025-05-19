@@ -176,16 +176,31 @@ class UserMachineLogSerializer(serializers.ModelSerializer):
         try:
             if not obj.OPERATOR_ID or obj.OPERATOR_ID == '0':
                 return ''
-            # First try exact match
+                
+            # Check in both Operator and OperatorAFL tables
+            # First try Operator model with exact match
             operator = Operator.objects.filter(rfid_card_no=obj.OPERATOR_ID).first()
             if operator:
                 return operator.operator_name
             
+            # Then try OperatorAFL model with exact match
+            from .models import OperatorAFL
+            operator_afl = OperatorAFL.objects.filter(rfid_card_no=obj.OPERATOR_ID).first()
+            if operator_afl:
+                return operator_afl.operatorAFL_name
+            
             # If no exact match, try converting OPERATOR_ID to string (in case it's stored differently)
             operator_id_str = str(obj.OPERATOR_ID)
+            
+            # Try regular Operator with string conversion
             operator = Operator.objects.filter(rfid_card_no=operator_id_str).first()
             if operator:
                 return operator.operator_name
+            
+            # Try OperatorAFL with string conversion
+            operator_afl = OperatorAFL.objects.filter(rfid_card_no=operator_id_str).first()
+            if operator_afl:
+                return operator_afl.operatorAFL_name
                 
             return f"Unknown ({obj.OPERATOR_ID})"
         except Exception as e:
