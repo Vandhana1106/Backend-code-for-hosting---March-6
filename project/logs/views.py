@@ -997,7 +997,6 @@ from rest_framework.decorators import api_view
 from rest_framework.response import Response
 from datetime import datetime
 from .models import MachineLog
-
 def process_machine_data(logs, machine_id):
     """Helper function to process data for a single machine"""
     # Calculate total working days and available hours (11 hours per day)
@@ -1005,7 +1004,7 @@ def process_machine_data(logs, machine_id):
     total_working_days = distinct_dates.count()
     total_available_hours = total_working_days * 11
 
-    # Get aggregated data by date
+    # Get aggregated data by date with operation counts
     daily_data = logs.values('DATE').annotate(
         sewing_hours=Sum(Case(
             When(MODE=1, then=F('duration_hours')),
@@ -1033,6 +1032,26 @@ def process_machine_data(logs, machine_id):
             output_field=FloatField()
         )),
         total_stitch_count=Sum('STITCH_COUNT'),
+        sewing_operation_count=Sum(Case(
+            When(MODE=1, then=F('STITCH_COUNT')),
+            default=Value(0),
+            output_field=IntegerField()
+        )),
+        sewing_skip_count=Sum(Case(
+            When(MODE=1, then=F('NEEDLE_RUNTIME')),
+            default=Value(0),
+            output_field=IntegerField()
+        )),
+        rework_operation_count=Sum(Case(
+            When(MODE=3, then=F('STITCH_COUNT')),
+            default=Value(0),
+            output_field=IntegerField()
+        )),
+        rework_stitch_count=Sum(Case(
+            When(MODE=3, then=F('NEEDLE_RUNTIME')),
+            default=Value(0),
+            output_field=IntegerField()
+        )),
         sewing_speed=Avg(Case(
             When(reserve_numeric__gt=0, then=F('reserve_numeric')),
             default=Value(0),
@@ -1049,6 +1068,10 @@ def process_machine_data(logs, machine_id):
     total_idle_hours = 0
     total_stitch_count = 0
     total_needle_runtime = 0
+    total_sewing_operation_count = 0
+    total_sewing_skip_count = 0
+    total_rework_operation_count = 0
+    total_rework_stitch_count = 0
     total_hours = 0
 
     formatted_table_data = []
@@ -1074,6 +1097,10 @@ def process_machine_data(logs, machine_id):
         formatted_table_data.append({
             'Date': str(data['DATE']),
             'Sewing Hours (PT)': round(sewing_hours, 2),
+            'Sewing Operation Count': data['sewing_operation_count'] or 0,
+            'Sewing Skip Count': data['sewing_skip_count'] or 0,
+            'Rework Operation Count': data['rework_operation_count'] or 0,
+            'Rework Stitch Count': data['rework_stitch_count'] or 0,
             'No Feeding Hours': round(no_feeding_hours, 2),
             'Meeting Hours': round(meeting_hours, 2),
             'Maintenance Hours': round(maintenance_hours, 2),
@@ -1095,6 +1122,10 @@ def process_machine_data(logs, machine_id):
         total_idle_hours += idle_hours
         total_stitch_count += data['total_stitch_count'] or 0
         total_needle_runtime += data['needle_runtime'] or 0
+        total_sewing_operation_count += data['sewing_operation_count'] or 0
+        total_sewing_skip_count += data['sewing_skip_count'] or 0
+        total_rework_operation_count += data['rework_operation_count'] or 0
+        total_rework_stitch_count += data['rework_stitch_count'] or 0
 
     # Calculate overall PT and NPT
     total_productive_time = total_sewing_hours
@@ -1135,6 +1166,10 @@ def process_machine_data(logs, machine_id):
             }
         },
         "totalStitchCount": total_stitch_count,
+        "totalSewingOperationCount": total_sewing_operation_count,
+        "totalSewingSkipCount": total_sewing_skip_count,
+        "totalReworkOperationCount": total_rework_operation_count,
+        "totalReworkStitchCount": total_rework_stitch_count,
         "averageSewingSpeed": round(average_sewing_speed, 2),
         "totalNeedleRuntime": round(total_needle_runtime, 2),
         "tableData": formatted_table_data
@@ -2119,7 +2154,27 @@ def process_machine_data(logs, machine_id):
             default=Value(0),
             output_field=FloatField()
         )),
-        needle_runtime=Sum('NEEDLE_RUNTIME')
+        needle_runtime=Sum('NEEDLE_RUNTIME'),
+        sewing_operation_count=Sum(Case(
+            When(MODE=1, then=F('STITCH_COUNT')),
+            default=Value(0),
+            output_field=IntegerField()
+        )),
+        sewing_skip_count=Sum(Case(
+            When(MODE=1, then=F('NEEDLE_RUNTIME')),
+            default=Value(0),
+            output_field=IntegerField()
+        )),
+        rework_operation_count=Sum(Case(
+            When(MODE=3, then=F('STITCH_COUNT')),
+            default=Value(0),
+            output_field=IntegerField()
+        )),
+        rework_skip_count=Sum(Case(
+            When(MODE=3, then=F('NEEDLE_RUNTIME')),
+            default=Value(0),
+            output_field=IntegerField()
+        ))
     ).order_by('DATE')
 
     # Calculate totals
@@ -2155,6 +2210,10 @@ def process_machine_data(logs, machine_id):
         formatted_table_data.append({
             'Date': str(data['DATE']),
             'Sewing Hours (PT)': round(sewing_hours, 2),
+            'Sewing Operation count': data['sewing_operation_count'] or 0,
+            'Sewing Skip count': data['sewing_skip_count'] or 0,
+            'Rework Operation count': data['rework_operation_count'] or 0,
+            'Rework Skip count': data['rework_skip_count'] or 0,
             'No Feeding Hours': round(no_feeding_hours, 2),
             'Meeting Hours': round(meeting_hours, 2),
             'Maintenance Hours': round(maintenance_hours, 2),
@@ -2162,7 +2221,6 @@ def process_machine_data(logs, machine_id):
             'Total Hours': round(daily_total_hours, 2),
             'Productive Time (PT) %': round(productive_time_percentage, 2),
             'Non-Productive Time (NPT) %': round(non_productive_time_percentage, 2),
-            'Sewing Speed': round(data['sewing_speed'], 2),
             'Stitch Count': data['total_stitch_count'],
             'Needle Runtime': data['needle_runtime'],
             'Machine ID': machine_id
@@ -3096,3 +3154,119 @@ def user_line_reports(request, line_number):
         # Process single line data
         line_report = process_user_line_data(logs, str(line_number))
         return Response(line_report)
+
+
+
+
+from rest_framework.decorators import api_view
+from rest_framework.response import Response
+from .models import UserMachineLog, OperatorAFL
+
+MODES = {
+    1: "Sewing",
+    2: "Idle",
+    3: "Rework",
+    4: "Needle Break",
+    5: "Maintenance",
+}
+
+@api_view(['GET'])
+def filter_user_logs(request):
+    line_number = request.GET.get('line_number')
+    from_date = request.GET.get('from_date')
+    to_date = request.GET.get('to_date')
+    
+    queryset = UserMachineLog.objects.all()
+    
+    if line_number and line_number.lower() != 'all':
+        queryset = queryset.filter(LINE_NUMB=line_number)
+    
+    if from_date:
+        queryset = queryset.filter(DATE__gte=from_date)
+    
+    if to_date:
+        queryset = queryset.filter(DATE__lte=to_date)
+    
+    # Prefetch operator data to optimize queries
+    logs = list(queryset)
+    operator_ids = set(log.OPERATOR_ID for log in logs if log.OPERATOR_ID != "0")
+    operators = OperatorAFL.objects.filter(rfid_card_no__in=operator_ids)
+    operator_map = {op.rfid_card_no: op.operator_name for op in operators}
+    
+    data = []
+    for log in logs:
+        log_data = {
+            **log.__dict__,
+            'mode_description': MODES.get(log.MODE, 'Unknown mode'),
+            'operator_name': operator_map.get(log.OPERATOR_ID, "") if log.OPERATOR_ID != "0" else ""
+        }
+        # Remove Django internal fields
+        log_data.pop('_state', None)
+        data.append(log_data)
+    
+    return Response(data)
+
+
+from rest_framework.decorators import api_view
+from rest_framework.response import Response
+from .models import UserMachineLog, OperatorAFL
+
+MODES = {
+    1: "Sewing",
+    2: "Idle",
+    3: "Rework",
+    4: "Needle Break",
+    5: "Maintenance",
+}
+
+@api_view(['GET'])
+def get_user_line_numbers(request):
+    from_date = request.GET.get('from_date')
+    to_date = request.GET.get('to_date')
+    
+    if not from_date or not to_date:
+        return Response({"error": "Both from_date and to_date are required"}, status=400)
+    
+    queryset = UserMachineLog.objects.filter(
+        DATE__gte=from_date,
+        DATE__lte=to_date
+    ).values_list('LINE_NUMB', flat=True).distinct()
+    
+    line_numbers = sorted(list(queryset))
+    return Response({"line_numbers": line_numbers})
+
+@api_view(['GET'])
+def filter_user_logs(request):
+    line_number = request.GET.get('line_number')
+    from_date = request.GET.get('from_date')
+    to_date = request.GET.get('to_date')
+    
+    queryset = UserMachineLog.objects.all()
+    
+    if line_number and line_number.lower() != 'all':
+        queryset = queryset.filter(LINE_NUMB=line_number)
+    
+    if from_date:
+        queryset = queryset.filter(DATE__gte=from_date)
+    
+    if to_date:
+        queryset = queryset.filter(DATE__lte=to_date)
+    
+    # Prefetch operator data to optimize queries
+    logs = list(queryset)
+    operator_ids = set(log.OPERATOR_ID for log in logs if log.OPERATOR_ID != "0")
+    operators = OperatorAFL.objects.filter(rfid_card_no__in=operator_ids)
+    operator_map = {op.rfid_card_no: op.operator_name for op in operators}
+    
+    data = []
+    for log in logs:
+        log_data = {
+            **log.__dict__,
+            'mode_description': MODES.get(log.MODE, 'Unknown mode'),
+            'operator_name': operator_map.get(log.OPERATOR_ID, "") if log.OPERATOR_ID != "0" else ""
+        }
+        # Remove Django internal fields
+        log_data.pop('_state', None)
+        data.append(log_data)
+    
+    return Response(data)

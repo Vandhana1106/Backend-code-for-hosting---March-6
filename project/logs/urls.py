@@ -4,6 +4,7 @@ from .views_user_afl_reports import machine_reports as user_afl_machine_reports
 from .views_user_afl_reports import all_machines_report as user_afl_all_machines_report
 from .views_user_afl_reports import operatorAFL_reports_by_name
 from .views_user_afl import get_consolidated_user_AFL_logs
+from .views_operation_metrics import machine_operation_metrics, user_machine_operation_metrics
 # from .views_afl_reports import afl_machine_reports, afl_all_machines_report
 
 
@@ -64,7 +65,11 @@ urlpatterns = [
     # Dedicated endpoint for all machines report
     path('api/afl/machines/reports/', afl_all_machines_report, name='afl_all_machines_report'),
     path('api/operator-afl-reports/<str:operator_name>/', operator_afl_reports_by_name, name='operator_afl_reports_by_name'),
-    path('api/user-line-reports/<str:line_number>/', user_line_reports, name='user_line_reports'),
-  
     
+    path('api/user-line-reports/<str:line_number>/', user_line_reports, name='user_line_reports'),
+    path('api/filter-user-logs/', filter_user_logs, name='filter_user_logs'),
+    path('api/get-user-line-numbers/', get_user_line_numbers, name='get_user_line_numbers'),
+    
+   
+  
 ]
