@@ -22,18 +22,13 @@ from rest_framework.views import APIView
 from rest_framework import status
 
 # Local application imports
-from .models import MachineLog, DuplicateLog, ModeMessage, Operator
+from .models import MachineLog, DuplicateLog, ModeMessage, Operator, OperatorAFL
 from .serializers import MachineLogSerializer
-from .models import MachineLog, OperatorAFL
+from .constants import MODES
 
-# Dictionary to map mode numbers to descriptions
-MODES = {
-    1: "Sewing",
-    2: "Idle",
-    3: "No feeding",
-    4: "Meeting",
-    5: "Maintenance",
-}
+# ======================================
+# Machine Data Management Endpoints
+# ======================================
 
 @api_view(['POST'])
 def log_machine_data(request):
@@ -146,29 +141,39 @@ def log_machine_data(request):
     }, status=200)
 
 
-from rest_framework.decorators import api_view
-from rest_framework.response import Response
-from .models import MachineLog
-from .serializers import MachineLogSerializer
+# ======================================
+# Logs Retrieval Endpoints
+# ======================================
 
 @api_view(['GET'])
 def get_machine_logs(request):
     """
     View to retrieve machine logs with optional date filtering.
+    
+    Parameters:
+        - from_date (query param): Optional. Filter logs created on or after this date
+        - to_date (query param): Optional. Filter logs created on or before this date
+    
+    Returns:
+        JSON response with indexed list of machine logs
     """
+    # Get date filter parameters from the request
     from_date = request.query_params.get('from_date')
     to_date = request.query_params.get('to_date')
     
+    # Query all logs, ordered by creation date (newest first)
     logs = MachineLog.objects.all().order_by('-created_at')
     
+    # Apply date filters if provided
     if from_date:
         logs = logs.filter(DATE__gte=from_date)
     if to_date:
         logs = logs.filter(DATE__lte=to_date)
     
+    # Serialize the logs to JSON
     serialized_logs = MachineLogSerializer(logs, many=True).data
 
-    # Add indexing (starting from 1)
+    # Add indexing (starting from 1) for easier reference
     for idx, log in enumerate(serialized_logs, start=1):
         log['index'] = idx
 
@@ -184,23 +189,35 @@ def user_login(request):
     - Authenticates the user
     - Returns a token if authentication is successful
     
+    Parameters:
+        - username: User's username
+        - password: User's password
+    
     Returns:
-        Response with status and message
+        Response with status and message, and token if authentication successful
     """
     data = request.data
     username = data.get('username')
     password = data.get('password')
 
+    # Validate required fields
     if not username or not password:
         return Response({"message": "Username and password are required"}, status=400)
 
+    # Authenticate user
     user = authenticate(username=username, password=password)
     if user is not None:
         # Authentication successful, generate token
         token, created = Token.objects.get_or_create(user=user)
         return Response({"message": "Login successful", "token": token.key}, status=200)
     else:
+        # Authentication failed
         return Response({"message": "Invalid credentials"}, status=400)
+
+
+# ======================================
+# Analytics and Reporting Endpoints
+# ======================================
 
 @api_view(['GET'])
 def get_underperforming_operators(request):
@@ -275,8 +292,21 @@ def calculate_line_efficiency(request):
 
     return Response(response)
 
+
+# ======================================
+# Helper Functions
+# ======================================
+
 def time_to_seconds(time_obj):
-    """Helper function to convert HH:MM:SS TimeField to total seconds."""
+    """
+    Helper function to convert HH:MM:SS TimeField to total seconds.
+    
+    Parameters:
+        time_obj: A time object with hour, minute, and second attributes
+        
+    Returns:
+        Total seconds as an integer
+    """
     return time_obj.hour * 3600 + time_obj.minute * 60 + time_obj.second
 
 @api_view(['GET'])
@@ -314,14 +344,41 @@ def calculate_operator_efficiency(request):
 
     return Response(response)
 
+
+# ======================================
+# Machine Log List View
+# ======================================
+
+# ======================================
+# Machine Log List View
+# ======================================
+
 class MachineLogListView(APIView):
     """
-    API View to list all machine logs.
+    API View to list all machine logs with optional filters.
+    
+    This class-based view provides a RESTful endpoint for retrieving
+    machine logs with pagination and sorting capabilities.
     """
     def get(self, request, format=None):
+        """
+        GET method to retrieve all machine logs.
+        
+        The method supports query parameters for pagination:
+        - page: Page number to retrieve
+        - page_size: Number of records per page
+        
+        Returns:
+            Serialized JSON response of machine logs with pagination metadata
+        """
         machine_logs = MachineLog.objects.all()
         serializer = MachineLogSerializer(machine_logs, many=True)
         return Response(serializer.data, status=status.HTTP_200_OK)
+
+
+# ======================================
+# Operator Report Endpoints
+# ======================================
 
 @api_view(['GET'])
 def operator_reports_by_name(request, operator_name):
@@ -667,15 +724,44 @@ def operator_reports_by_name(request, operator_name):
         "totalPT": round(total_production_hours, 2),
         "totalNPT": round(total_non_production_hours, 2)
     })
-from django.db.models import Sum, Case, When, Value, FloatField, F, ExpressionWrapper, Q, IntegerField, Avg, Count
-from django.db.models.functions import ExtractHour, ExtractMinute, ExtractSecond, Cast
-from rest_framework.decorators import api_view
-from rest_framework.response import Response
-from datetime import datetime
-from .models import MachineLog
+
+
+# ======================================
+# Line Reports and Processing Functions
+# ======================================
 
 def process_line_data(logs, line_number):
-    """Helper function to process data for a single line"""
+    """
+    Helper function to process and analyze data for a single production line.
+    
+    This function performs complex calculations on machine logs to generate
+    comprehensive metrics for production line performance analysis including:
+    - Work hours and utilization rates
+    - Productive vs non-productive time
+    - Sewing speeds and efficiency metrics
+    - Machine counts and operational statistics
+    
+    Parameters:
+        logs: QuerySet of MachineLog objects filtered for a specific line
+        line_number: The line number being processed (string or int)
+        
+    Returns:
+        dict: Dictionary containing processed analytics data with the following keys:
+            - lineNumber: The line identifier
+            - totalIdealHours: Maximum possible working hours
+            - utilizationPercentage: Percentage of ideal hours actually utilized
+            - totalWorkingDays: Number of days with activity
+            - averageMachines: Average number of machines in use
+            - totalHours: Actual working hours
+            - totalProductiveTime: Dict with hours and percentage
+            - totalNonProductiveTime: Dict with hours, percentage and breakdown
+            - totalStitchCount: Total stitches made
+            - averageSewingSpeed: Average sewing speed
+            - totalNeedleRuntime: Total needle runtime
+            - needleRuntimePercentage: Percentage of productive time with needle running
+            - tableData: Daily breakdown of all metrics
+        Dictionary containing processed metrics and table data for the line
+    """
     # Calculate total ideal hours (sum of all Mode 2 durations)
     ideal_hours_data = logs.filter(MODE=2).aggregate(
         total_ideal=Sum('duration_hours')
@@ -843,8 +929,29 @@ def process_line_data(logs, line_number):
         "tableData": formatted_table_data
     }
 
+# ======================================
+# Line Reports and Processing Functions
+# ======================================
+
 @api_view(['GET'])
 def line_reports(request, line_number):
+    """
+    Generate a comprehensive report for a specific production line or all lines.
+    
+    This endpoint provides detailed metrics for production lines including:
+    - Working hours and utilization
+    - Productive vs. non-productive time
+    - Stitch counts and sewing speeds
+    - Machine usage and efficiency
+    
+    Parameters:
+        line_number (str/int): The line number to report on, or 'all' for all lines
+        from_date (query param): Start date for the report (YYYY-MM-DD)
+        to_date (query param): End date for the report (YYYY-MM-DD)
+    
+    Returns:
+        Response: JSON containing line performance data or appropriate error
+    """
     try:
         # Get valid operator IDs from Operator model
         valid_operators = Operator.objects.values_list('rfid_card_no', flat=True)
@@ -991,14 +1098,38 @@ def line_reports(request, line_number):
         line_report = process_line_data(logs, str(line_number))
         return Response(line_report)
 
-from django.db.models import Sum, Case, When, Value, FloatField, F, ExpressionWrapper, Q, IntegerField, Avg, Count
-from django.db.models.functions import ExtractHour, ExtractMinute, ExtractSecond, Cast
-from rest_framework.decorators import api_view
-from rest_framework.response import Response
-from datetime import datetime
-from .models import MachineLog
+
+# ======================================
+# Machine Reports and Processing Functions
+# ======================================
+
 def process_machine_data(logs, machine_id):
-    """Helper function to process data for a single machine"""
+    """
+    Helper function to process and analyze data for a single machine.
+    
+    This function performs complex calculations on machine logs to generate
+    comprehensive metrics for machine performance analysis including:
+    - Working hours and efficiency metrics
+    - Productive vs non-productive time
+    - Sewing speeds and stitch counts
+    - Operator usage statistics
+    
+    Parameters:
+        logs: QuerySet of MachineLog objects filtered for a specific machine
+        machine_id: The machine ID being processed (string or int)
+        
+    Returns:
+        dict: Dictionary containing processed analytics data with the following keys:
+            - machineId: The machine identifier
+            - totalWorkingDays: Number of days the machine was active
+            - totalHours: Total recorded working hours
+            - totalProductiveTime: Dict with hours and percentage
+            - totalNonProductiveTime: Dict with hours, percentage and breakdown
+            - totalStitchCount: Total stitches made
+            - averageSewingSpeed: Average sewing speed
+            - totalNeedleRuntime: Total needle runtime hours
+            - tableData: Daily breakdown of all metrics
+    """
     # Calculate total working days and available hours (11 hours per day)
     distinct_dates = logs.dates('DATE', 'day')
     total_working_days = distinct_dates.count()
@@ -1175,8 +1306,29 @@ def process_machine_data(logs, machine_id):
         "tableData": formatted_table_data
     }
 
+# ======================================
+# Machine Reports and Processing Functions
+# ======================================
+
 @api_view(['GET'])
 def machine_reports(request, machine_id):
+    """
+    Generate a comprehensive report for a specific machine or all machines.
+    
+    This endpoint analyzes machine performance data including:
+    - Working hours and efficiency
+    - Productive vs. non-productive time breakdown
+    - Stitch counts and sewing speeds
+    - Operator utilization of the machine
+    
+    Parameters:
+        machine_id (str/int): The machine ID to report on, or 'all' for all machines
+        from_date (query param): Start date for the report (YYYY-MM-DD)
+        to_date (query param): End date for the report (YYYY-MM-DD)
+    
+    Returns:
+        Response: JSON containing machine performance data or appropriate error
+    """
     try:
         # Get valid operator IDs from Operator model
         valid_operators = Operator.objects.values_list('rfid_card_no', flat=True)
@@ -1452,17 +1604,12 @@ def operator_reports_all(request):
 
     return Response(all_operators_data)
 
-from rest_framework.decorators import api_view
-from rest_framework.response import Response
-from .models import MachineLog, Operator
+# Use imports and MODES constant from the top of the file
 
-MODES = {
-    1: "Sewing",
-    2: "Idle",
-    3: "No feeding",
-    4: "Meeting",
-    5: "Maintenance",
-}
+
+# ======================================
+# Filtering and Lookup Endpoints
+# ======================================
 
 @api_view(['GET'])
 def filter_logs(request):
@@ -1576,22 +1723,24 @@ def get_machine_ids(request):
 
 
 # views.py
-from rest_framework.decorators import api_view
-from rest_framework.response import Response
-from django.db.models import Sum, Count, Avg
-from datetime import timedelta
-
-
-MODES = {
-    1: "Sewing",
-    2: "Idle",
-    3: "No feeding",
-    4: "Meeting",
-    5: "Maintenance",
-}
+# Use imports and MODES constant from the top of the file
 
 @api_view(['GET'])
 def get_operator_ids(request):
+    """
+    Retrieve a list of all unique operator IDs within the specified date range.
+    
+    This endpoint is typically used to populate dropdown lists in the frontend or
+    to validate operator selection in other API calls.
+    
+    Parameters:
+        from_date (str): Start date for filtering operators (YYYY-MM-DD)
+        to_date (str): End date for filtering operators (YYYY-MM-DD)
+    
+    Returns:
+        Response: JSON containing a sorted list of operator IDs
+                 or an error if date parameters are missing
+    """
     from_date = request.GET.get('from_date')
     to_date = request.GET.get('to_date')
     
@@ -1605,6 +1754,10 @@ def get_operator_ids(request):
     
     operator_ids = sorted(list(queryset))
     return Response({"operator_ids": operator_ids})
+
+# ======================================
+# Operator Report Endpoints
+# ======================================
 
 @api_view(['GET'])
 def operator_report(request, operator_id):
@@ -1721,6 +1874,23 @@ def operator_report(request, operator_id):
 
 @api_view(['GET'])
 def all_operators_report(request):
+    """
+    Generate a summary report for all operators within a specified date range.
+    
+    This endpoint provides an aggregated view of operator performance metrics including:
+    - Total working hours
+    - Productive hours and percentage
+    - Stitch count
+    - Machine utilization
+    
+    Parameters:
+        from_date (str): Start date for the report (YYYY-MM-DD) 
+        to_date (str): End date for the report (YYYY-MM-DD)
+    
+    Returns:
+        Response: JSON containing performance data for all operators
+                 or an error if date parameters are missing
+    """
     from_date = request.GET.get('from_date')
     to_date = request.GET.get('to_date')
     
@@ -1777,27 +1947,26 @@ def all_operators_report(request):
     return Response({"allOperatorsReport": all_operators_report})
 
 
-from rest_framework.decorators import api_view
-from rest_framework.response import Response
-from django.db.models import Q, Count, Sum, F, FloatField
-from django.db.models.functions import ExtractHour, ExtractMinute, ExtractSecond
-from django.db.models.expressions import ExpressionWrapper
-from .models import MachineLog, Operator
-from .serializers import MachineLogSerializer
-
-MODES = {
-    1: "Sewing",
-    2: "Idle",
-    3: "Meeting",
-    4: "No Feeding",
-    5: "Maintenance"
-}
+# Use imports and MODES constant from the top of the file
 
 @api_view(['GET'])
 def get_consolidated_logs(request):
     """
-    View to retrieve machine logs with summary calculations.
-    Handles multiple filter values for machine_id, line_number, and operator_name.
+    Retrieve machine logs with summary calculations and filtering capabilities.
+    
+    This view provides a comprehensive way to query and analyze machine logs with filters
+    for multiple machine IDs, line numbers, and operator names. It also calculates 
+    aggregated metrics like total hours, productive time, non-productive time, and more.
+    
+    Parameters:
+        from_date (str): Start date for filtering logs (YYYY-MM-DD)
+        to_date (str): End date for filtering logs (YYYY-MM-DD)
+        machine_id (list): List of machine IDs to filter by
+        line_number (list): List of line numbers to filter by
+        operator_name (list): List of operator names or IDs to filter by
+    
+    Returns:
+        Response: JSON containing summary data and serialized logs with applied filters
     """
     from_date = request.query_params.get('from_date')
     to_date = request.query_params.get('to_date')
@@ -1833,26 +2002,31 @@ def get_consolidated_logs(request):
         logs = logs.filter(OPERATOR_ID__in=operator_ids)
     
     # Calculate duration in hours for each log entry
+    # This complex query converts time fields to seconds for accurate duration calculations
+    # and enables proper filtering of work hours and breaks
     logs = logs.annotate(
+        # Convert START_TIME to seconds (hours*3600 + minutes*60 + seconds)
         start_seconds=ExpressionWrapper(
             ExtractHour('START_TIME') * 3600 + 
             ExtractMinute('START_TIME') * 60 + 
             ExtractSecond('START_TIME'),
             output_field=FloatField()
         ),
+        # Convert END_TIME to seconds (hours*3600 + minutes*60 + seconds)
         end_seconds=ExpressionWrapper(
             ExtractHour('END_TIME') * 3600 + 
             ExtractMinute('END_TIME') * 60 + 
             ExtractSecond('END_TIME'),
             output_field=FloatField()
         ),
+        # Calculate duration in hours by subtracting seconds and dividing by 3600
         duration_hours=ExpressionWrapper(
             (F('end_seconds') - F('start_seconds')) / 3600,
             output_field=FloatField()
         )
     )
     
-    # Filter for working hours (8:25 AM to 7:30 PM)
+    # Filter for standard working hours (8:25 AM to 7:30 PM)
     logs = logs.filter(
         start_seconds__gte=30300,  # 8:25 AM (8.416667 * 3600)
         end_seconds__lte=70500     # 7:30 PM (19.5 * 3600)
@@ -1860,9 +2034,12 @@ def get_consolidated_logs(request):
     
     # Exclude specific break periods
     logs = logs.exclude(
-        Q(start_seconds__gte=37800, end_seconds__lte=38400) |  # 10:30-10:40
-        Q(start_seconds__gte=48000, end_seconds__lte=50400) |  # 13:20-14:00
-        Q(start_seconds__gte=58800, end_seconds__lte=59400)    # 16:20-16:30
+        # Morning break: 10:30-10:40 AM
+        Q(start_seconds__gte=37800, end_seconds__lte=38400) |  
+        # Lunch break: 13:20-14:00
+        Q(start_seconds__gte=48000, end_seconds__lte=50400) |  
+        # Afternoon break: 16:20-16:30
+        Q(start_seconds__gte=58800, end_seconds__lte=59400)    
     )
     
     # Calculate summary data
@@ -3158,17 +3335,9 @@ def user_line_reports(request, line_number):
 
 
 
-from rest_framework.decorators import api_view
-from rest_framework.response import Response
-from .models import UserMachineLog, OperatorAFL
-
-MODES = {
-    1: "Sewing",
-    2: "Idle",
-    3: "Rework",
-    4: "Needle Break",
-    5: "Maintenance",
-}
+# ======================================
+# User Logs Filtering Endpoints
+# ======================================
 
 @api_view(['GET'])
 def filter_user_logs(request):
@@ -3207,17 +3376,9 @@ def filter_user_logs(request):
     return Response(data)
 
 
-from rest_framework.decorators import api_view
-from rest_framework.response import Response
-from .models import UserMachineLog, OperatorAFL
-
-MODES = {
-    1: "Sewing",
-    2: "Idle",
-    3: "Rework",
-    4: "Needle Break",
-    5: "Maintenance",
-}
+# ======================================
+# User Line Number Endpoints
+# ======================================
 
 @api_view(['GET'])
 def get_user_line_numbers(request):
@@ -3235,38 +3396,4 @@ def get_user_line_numbers(request):
     line_numbers = sorted(list(queryset))
     return Response({"line_numbers": line_numbers})
 
-@api_view(['GET'])
-def filter_user_logs(request):
-    line_number = request.GET.get('line_number')
-    from_date = request.GET.get('from_date')
-    to_date = request.GET.get('to_date')
-    
-    queryset = UserMachineLog.objects.all()
-    
-    if line_number and line_number.lower() != 'all':
-        queryset = queryset.filter(LINE_NUMB=line_number)
-    
-    if from_date:
-        queryset = queryset.filter(DATE__gte=from_date)
-    
-    if to_date:
-        queryset = queryset.filter(DATE__lte=to_date)
-    
-    # Prefetch operator data to optimize queries
-    logs = list(queryset)
-    operator_ids = set(log.OPERATOR_ID for log in logs if log.OPERATOR_ID != "0")
-    operators = OperatorAFL.objects.filter(rfid_card_no__in=operator_ids)
-    operator_map = {op.rfid_card_no: op.operator_name for op in operators}
-    
-    data = []
-    for log in logs:
-        log_data = {
-            **log.__dict__,
-            'mode_description': MODES.get(log.MODE, 'Unknown mode'),
-            'operator_name': operator_map.get(log.OPERATOR_ID, "") if log.OPERATOR_ID != "0" else ""
-        }
-        # Remove Django internal fields
-        log_data.pop('_state', None)
-        data.append(log_data)
-    
-    return Response(data)
+# End of file

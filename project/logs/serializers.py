@@ -1,146 +1,29 @@
-# from rest_framework import serializers
-# from .models import MachineLog, ModeMessage, Operator
-# from datetime import datetime
-
-# class MachineLogSerializer(serializers.ModelSerializer):
-#     DATE = serializers.CharField()  # Accept date as a string initially
-#     START_TIME = serializers.CharField()  # Accept time as a string initially
-#     END_TIME = serializers.CharField()  # Accept time as a string initially
-#     operator_name = serializers.SerializerMethodField()
-#     mode_description = serializers.SerializerMethodField()
-
-#     class Meta:
-#         model = MachineLog
-#         fields = '__all__'  # Keep all existing fields + added fields
-
-#     def get_operator_name(self, obj):
-#         try:
-#             operator = Operator.objects.get(rfid_card_no=obj.OPERATOR_ID)
-#             return operator.operator_name
-#         except Operator.DoesNotExist:
-#             return None
-
-#     def get_mode_description(self, obj):
-#         # First try to get from ModeMessage model
-#         mode_message = ModeMessage.objects.filter(mode=obj.MODE).first()
-#         if mode_message:
-#             return mode_message.message
-        
-#         # Fall back to MODES dictionary if no database record found
-#         from .views import MODES
-#         return MODES.get(obj.MODE, "N/A")
-
-#     def validate_DATE(self, value):
-#         try:
-#             date_obj = datetime.strptime(value, '%Y:%m:%d').date()
-#             return date_obj
-#         except ValueError:
-#             raise serializers.ValidationError("Date must be in YYYY:MM:DD format")
-
-#     def validate_START_TIME(self, value):
-#         return self._validate_time(value)
-
-#     def validate_END_TIME(self, value):
-#         return self._validate_time(value)
-
-#     def _validate_time(self, value):
-#         try:
-#             parts = value.split(':')
-#             if len(parts) == 3:
-#                 hour, minute, second = parts
-#                 time_str = f"{int(hour):02d}:{int(minute):02d}:{int(second):02d}"
-#             elif len(parts) == 2:
-#                 hour, minute = parts
-#                 time_str = f"{int(hour):02d}:{int(minute):02d}:00"
-#             else:
-#                 raise ValueError("Invalid time format")
-#             time_obj = datetime.strptime(time_str, '%H:%M:%S').time()
-#             return time_obj
-#         except ValueError:
-#             raise serializers.ValidationError("Time must be in HH:MM:SS format")
-
-
-
-
-# from rest_framework import serializers
-# from .models import UserMachineLog
-
-# class UserMachineLogSerializer(serializers.ModelSerializer):
-#     class Meta:
-#         model = UserMachineLog
-#         fields = '__all__'
-
-
-
-# from rest_framework import serializers
-# from .models import UserMachineLog, Operator, ModeMessage
-# from datetime import datetime
-
-# class UserMachineLogSerializer(serializers.ModelSerializer):
-#     DATE = serializers.DateField(format='%Y-%m-%d', input_formats=['%Y-%m-%d', '%Y:%m:%d'], required=False)
-#     START_TIME = serializers.TimeField(format='%H:%M:%S', input_formats=['%H:%M:%S', '%H:%M'], required=False)
-#     END_TIME = serializers.TimeField(format='%H:%M:%S', input_formats=['%H:%M:%S', '%H:%M'], required=False)
-#     operator_name = serializers.SerializerMethodField()
-#     mode_description = serializers.SerializerMethodField()
-    
-#     class Meta:
-#         model = UserMachineLog
-#         fields = [
-#             'id', 'MACHINE_ID', 'LINE_NUMB', 'OPERATOR_ID', 'DATE', 'START_TIME', 'END_TIME',
-#             'MODE', 'STITCH_COUNT', 'NEEDLE_RUNTIME', 'NEEDLE_STOPTIME', 'Tx_LOGID',
-#             'Str_LOGID', 'DEVICE_ID', 'RESERVE', 'created_at', 'operator_name', 'mode_description'
-#         ]
-        
-#     def get_operator_name(self, obj):
-#         try:
-#             if not obj.OPERATOR_ID or obj.OPERATOR_ID == '0':
-#                 return ''
-#             # First try exact match
-#             operator = Operator.objects.filter(rfid_card_no=obj.OPERATOR_ID).first()
-#             if operator:
-#                 return operator.operator_name
-            
-#             # If no exact match, try converting OPERATOR_ID to string (in case it's stored differently)
-#             operator_id_str = str(obj.OPERATOR_ID)
-#             operator = Operator.objects.filter(rfid_card_no=operator_id_str).first()
-#             if operator:
-#                 return operator.operator_name
-                
-#             return f"Unknown ({obj.OPERATOR_ID})"
-#         except Exception as e:
-#             print(f"Error getting operator name: {e}")
-#             return f"Error ({obj.OPERATOR_ID})"
-
-#     def get_mode_description(self, obj):
-#         try:
-#             if obj.MODE is None:
-#                 return ''
-                
-#             # Try to get description from ModeMessage model
-#             mode_message = ModeMessage.objects.filter(mode=obj.MODE).first()
-#             if mode_message and mode_message.message:
-#                 return mode_message.message
-            
-#             # Fall back to MODES dictionary if no database record found
-#             from .views import MODES
-#             mode_description = MODES.get(obj.MODE)
-#             if mode_description:
-#                 return mode_description
-                
-#             # If all else fails, return a default with the mode number
-#             return f"Mode {obj.MODE}"
-#         except Exception as e:
-#             print(f"Error getting mode description: {e}")
-#             return f"Mode {obj.MODE}"
-
-
-
-
-from rest_framework import serializers
-from .models import MachineLog, ModeMessage, Operator, AdminUser, User
+"""
+This module provides Django Rest Framework serializers for the logging application.
+It handles conversion between JSON and Python objects for all model instances.
+"""
+# Standard library imports
 from datetime import datetime
 
+# Third-party imports
+from rest_framework import serializers
+
+# Local application imports
+from .models import (
+    MachineLog, ModeMessage, Operator, 
+    UserMachineLog, OperatorAFL
+)
+from .constants import MODES
+
+
 class MachineLogSerializer(serializers.ModelSerializer):
+    """
+    Serializer for MachineLog model.
+    
+    Handles conversion between JSON and MachineLog model instances,
+    with additional fields for operator name and mode description.
+    """
+    # Define custom fields
     DATE = serializers.CharField()  # Accept date as a string initially
     START_TIME = serializers.CharField()  # Accept time as a string initially
     END_TIME = serializers.CharField()  # Accept time as a string initially
@@ -149,9 +32,10 @@ class MachineLogSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = MachineLog
-        fields = '__all__'  # Keep all existing fields + added fields
+        fields = '__all__'  # Include all model fields plus the custom fields defined above
 
     def get_operator_name(self, obj):
+        """Get operator name based on OPERATOR_ID."""
         try:
             operator = Operator.objects.get(rfid_card_no=obj.OPERATOR_ID)
             return operator.operator_name
@@ -159,16 +43,17 @@ class MachineLogSerializer(serializers.ModelSerializer):
             return None
 
     def get_mode_description(self, obj):
+        """Get mode description from ModeMessage model or MODES dictionary."""
         # First try to get from ModeMessage model
         mode_message = ModeMessage.objects.filter(mode=obj.MODE).first()
         if mode_message:
             return mode_message.message
         
         # Fall back to MODES dictionary if no database record found
-        from .views import MODES
         return MODES.get(obj.MODE, "N/A")
 
     def validate_DATE(self, value):
+        """Validate and convert date string to date object."""
         try:
             date_obj = datetime.strptime(value, '%Y:%m:%d').date()
             return date_obj
@@ -176,12 +61,15 @@ class MachineLogSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError("Date must be in YYYY:MM:DD format")
 
     def validate_START_TIME(self, value):
+        """Validate start time format."""
         return self._validate_time(value)
 
     def validate_END_TIME(self, value):
+        """Validate end time format."""
         return self._validate_time(value)
 
     def _validate_time(self, value):
+        """Helper method to validate and convert time strings to time objects."""
         try:
             parts = value.split(':')
             if len(parts) == 3:
@@ -198,43 +86,28 @@ class MachineLogSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError("Time must be in HH:MM:SS format")
 
 
-class AdminUserSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = AdminUser
-        fields = ['id', 'username', 'password', 'is_active', 'created_at']
-        extra_kwargs = {
-            'password': {'write_only': True},
-            'created_at': {'read_only': True}
-        }
-
-
-class ClientMachineLogSerializer(MachineLogSerializer):
-    class Meta(MachineLogSerializer.Meta):
-        # Since parent fields is '__all__' (a string), we need to explicitly list all fields
-        model = MachineLog
-        fields = '__all__'  # This will include 'CLIENT' if it's in the model
-        
-        
-class UserSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = User
-        fields = ['id', 'username', 'password']
-        extra_kwargs = {
-            'password': {'write_only': True}
-        }
 
 
 
-# serializers.py
 
-from rest_framework import serializers
-from .models import UserMachineLog, Operator, ModeMessage
-from datetime import datetime
 
 class UserMachineLogSerializer(serializers.ModelSerializer):
-    DATE = serializers.DateField(format='%Y-%m-%d', input_formats=['%Y-%m-%d', '%Y:%m:%d'], required=False)
-    START_TIME = serializers.TimeField(format='%H:%M:%S', input_formats=['%H:%M:%S', '%H:%M'], required=False)
-    END_TIME = serializers.TimeField(format='%H:%M:%S', input_formats=['%H:%M:%S', '%H:%M'], required=False)
+    """
+    Serializer for UserMachineLog model.
+    
+    Handles user-specific machine log data with enhanced field validation
+    and additional derived fields.
+    """
+    # Define fields with appropriate formats and validation
+    DATE = serializers.DateField(format='%Y-%m-%d', 
+                                input_formats=['%Y-%m-%d', '%Y:%m:%d'], 
+                                required=False)
+    START_TIME = serializers.TimeField(format='%H:%M:%S', 
+                                      input_formats=['%H:%M:%S', '%H:%M'], 
+                                      required=False)
+    END_TIME = serializers.TimeField(format='%H:%M:%S', 
+                                    input_formats=['%H:%M:%S', '%H:%M'], 
+                                    required=False)
     operator_name = serializers.SerializerMethodField()
     mode_description = serializers.SerializerMethodField()
     
@@ -247,7 +120,13 @@ class UserMachineLogSerializer(serializers.ModelSerializer):
         ]
         
     def get_operator_name(self, obj):
+        """
+        Get operator name from either Operator or OperatorAFL models.
+        
+        Handles different storage formats and returns appropriate fallbacks if not found.
+        """
         try:
+            # Return empty string for null or zero operator IDs
             if not obj.OPERATOR_ID or obj.OPERATOR_ID == '0':
                 return ''
                 
@@ -258,7 +137,6 @@ class UserMachineLogSerializer(serializers.ModelSerializer):
                 return operator.operator_name
             
             # Then try OperatorAFL model with exact match
-            from .models import OperatorAFL
             operator_afl = OperatorAFL.objects.filter(rfid_card_no=obj.OPERATOR_ID).first()
             if operator_afl:
                 return operator_afl.operatorAFL_name
@@ -276,12 +154,19 @@ class UserMachineLogSerializer(serializers.ModelSerializer):
             if operator_afl:
                 return operator_afl.operatorAFL_name
                 
+            # If no match found, return a formatted unknown string
             return f"Unknown ({obj.OPERATOR_ID})"
         except Exception as e:
+            # Log error and return formatted error string
             print(f"Error getting operator name: {e}")
             return f"Error ({obj.OPERATOR_ID})"
 
     def get_mode_description(self, obj):
+        """
+        Get mode description from ModeMessage model or MODES dictionary.
+        
+        Handles null modes and provides appropriate fallbacks if description not found.
+        """
         try:
             if obj.MODE is None:
                 return ''
@@ -292,7 +177,6 @@ class UserMachineLogSerializer(serializers.ModelSerializer):
                 return mode_message.message
             
             # Fall back to MODES dictionary if no database record found
-            from .views import MODES
             mode_description = MODES.get(obj.MODE)
             if mode_description:
                 return mode_description
@@ -300,5 +184,6 @@ class UserMachineLogSerializer(serializers.ModelSerializer):
             # If all else fails, return a default with the mode number
             return f"Mode {obj.MODE}"
         except Exception as e:
+            # Log error and return formatted error string
             print(f"Error getting mode description: {e}")
             return f"Mode {obj.MODE}"

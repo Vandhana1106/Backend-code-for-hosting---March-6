@@ -13,10 +13,7 @@ urlpatterns = [
     path('logs/', get_machine_logs, name='get-machine-logs'),
     path('get_consolidated_logs/', get_consolidated_logs, name='get_consolidated_logs/'),
     path('user_login/', user_login, name='user_login'),
-    # path('admin_login/', admin_login, name='admin_login'),  # New admin login endpoint
-    # path('register_admin/', register_admin_user, name='register_admin_user'),  # Register new admin user
-    # path('admin/logs/', get_admin_machine_logs, name='get-admin-machine-logs'),  # Admin logs endpoint
-    # path('admin/log/', admin_log_machine_data, name='admin-log-machine-data'),  # Admin log machine data endpoint
+   
     path('machine_count/', get_machine_id_count, name='get_machine_count'),  
     path('line_count/', get_line_number_count, name='get_line_count'),  
     path('calculate_efficiency/', calculate_line_efficiency, name='calculate_efficiency'),
@@ -30,9 +27,7 @@ urlpatterns = [
     path('machines/all/reports/', all_machines_report),
     path('operator_reports/', operator_reports_all, name='operator_reports_all'),
     
-    # # AFL specific endpoints
-    # path('afl/machines/<str:machine_id>/reports/', afl_machine_reports, name='afl-machine-reports'),
-    # path('afl/machines/all/reports/', afl_all_machines_report, name='afl-all-machines-report'),
+    
     
     path('logs/filter/', filter_logs, name='filter-logs'),
     path('logs/machine-filter',filter_logs_by_machine_id, name='filter-logs-by-machine-id'),
@@ -45,14 +40,7 @@ urlpatterns = [
 
 
 
-#    path('machine-reports-afl/<str:machine_id>/', machine_reports_afl, name='machine-reports-afl'),
-#    path('all-machines-report-afl/', all_machines_report_afl, name='all-machines-report-afl'),
-   
 
-    # path('machine-reports-afl/<str:machine_id>/', machineAFL_reports, name='machine-reports-afl'),
-    # path('all-machines-report-afl/', all_machinesAFL_report, name='all-machines-report-afl'),
-    
-    # New UserMachineLog and OperatorAFL endpoints
     path('user-machine-reports/<str:machine_id>/', user_afl_machine_reports, name='user-machine-reports'),
     path('user-all-machines-report/', user_afl_all_machines_report, name='user-all-machines-report'),
     path('operatorAFL_report_by_name/<str:operator_name>/', operatorAFL_reports_by_name, name='operatorAFL_reports_by_name'),
@@ -62,7 +50,7 @@ urlpatterns = [
 
     path('api/afl/machines/<str:machine_id>/reports/', afl_machine_reports, name='afl_machine_reports'),
     
-    # Dedicated endpoint for all machines report
+    
     path('api/afl/machines/reports/', afl_all_machines_report, name='afl_all_machines_report'),
     path('api/operator-afl-reports/<str:operator_name>/', operator_afl_reports_by_name, name='operator_afl_reports_by_name'),
     
