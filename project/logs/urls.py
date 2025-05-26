@@ -25,14 +25,14 @@ urlpatterns = [
     path('machines/<str:machine_id>/reports/', machine_reports, name='machine-reports'),
     path('machines/<str:machine_id>/reports/', machine_reports),
     path('machines/all/reports/', all_machines_report),
-    path('operator_reports/', operator_reports_all, name='operator_reports_all'),
+   
     
     
     
     path('logs/filter/', filter_logs, name='filter-logs'),
-    path('logs/machine-filter',filter_logs_by_machine_id, name='filter-logs-by-machine-id'),
+    
     path('logs/line-numbers/', get_line_numbers, name='get-line-numbers'),
-    path('logs/machine-ids/',  get_machine_ids, name=' get_machine_ids'),
+    
 
 
     path('user-machine-log/', log_user_machine_data, name='log-user-machine-data'),
@@ -54,9 +54,9 @@ urlpatterns = [
     path('api/afl/machines/reports/', afl_all_machines_report, name='afl_all_machines_report'),
     path('api/operator-afl-reports/<str:operator_name>/', operator_afl_reports_by_name, name='operator_afl_reports_by_name'),
     
-    path('api/user-line-reports/<str:line_number>/', user_line_reports, name='user_line_reports'),
-    path('api/filter-user-logs/', filter_user_logs, name='filter_user_logs'),
-    path('api/get-user-line-numbers/', get_user_line_numbers, name='get_user_line_numbers'),
+    # path('api/user-line-reports/<str:line_number>/', user_line_reports, name='user_line_reports'),
+    # path('api/filter-user-logs/', filter_user_logs, name='filter_user_logs'),
+    # path('api/get-user-line-numbers/', get_user_line_numbers, name='get_user_line_numbers'),
     
    
   
