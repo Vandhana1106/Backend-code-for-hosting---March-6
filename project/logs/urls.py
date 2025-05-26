@@ -35,24 +35,24 @@ urlpatterns = [
     
 
 
-    path('user-machine-log/', log_user_machine_data, name='log-user-machine-data'),
-    path('user-machine-logs/', get_user_machine_logs, name='get-user-machine-logs'),
+    # path('user-machine-log/', log_user_machine_data, name='log-user-machine-data'),
+    # path('user-machine-logs/', get_user_machine_logs, name='get-user-machine-logs'),
 
 
 
 
-    path('user-machine-reports/<str:machine_id>/', user_afl_machine_reports, name='user-machine-reports'),
-    path('user-all-machines-report/', user_afl_all_machines_report, name='user-all-machines-report'),
-    path('operatorAFL_report_by_name/<str:operator_name>/', operatorAFL_reports_by_name, name='operatorAFL_reports_by_name'),
-    path('get_consolidated_user_AFL_logs/', get_consolidated_user_AFL_logs, name='get_consolidated_user_AFL_logs'),
+    # path('user-machine-reports/<str:machine_id>/', user_afl_machine_reports, name='user-machine-reports'),
+    # path('user-all-machines-report/', user_afl_all_machines_report, name='user-all-machines-report'),
+    # path('operatorAFL_report_by_name/<str:operator_name>/', operatorAFL_reports_by_name, name='operatorAFL_reports_by_name'),
+    # path('get_consolidated_user_AFL_logs/', get_consolidated_user_AFL_logs, name='get_consolidated_user_AFL_logs'),
 
 
 
-    path('api/afl/machines/<str:machine_id>/reports/', afl_machine_reports, name='afl_machine_reports'),
+    # path('api/afl/machines/<str:machine_id>/reports/', afl_machine_reports, name='afl_machine_reports'),
     
     
-    path('api/afl/machines/reports/', afl_all_machines_report, name='afl_all_machines_report'),
-    path('api/operator-afl-reports/<str:operator_name>/', operator_afl_reports_by_name, name='operator_afl_reports_by_name'),
+    # path('api/afl/machines/reports/', afl_all_machines_report, name='afl_all_machines_report'),
+    # path('api/operator-afl-reports/<str:operator_name>/', operator_afl_reports_by_name, name='operator_afl_reports_by_name'),
     
     # path('api/user-line-reports/<str:line_number>/', user_line_reports, name='user_line_reports'),
     # path('api/filter-user-logs/', filter_user_logs, name='filter_user_logs'),

@@ -80,7 +80,7 @@ WSGI_APPLICATION = 'machine_log_api.wsgi.application'
 DATABASES = {
     'default': {
         'ENGINE': 'django.db.backends.postgresql',
-        'NAME': os.environ.get('PGDATABASE', 'productdb'),
+        'NAME': os.environ.get('PGDATABASE', 'spark'),
         'USER': os.environ.get('PGUSER', 'postgres'),
         'PASSWORD': os.environ.get('PGPASSWORD', 'postgres'),
         'HOST': os.environ.get('PGHOST', 'localhost'),

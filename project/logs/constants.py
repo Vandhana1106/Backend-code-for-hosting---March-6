@@ -9,4 +9,6 @@ MODES = {
     3: "No feeding",
     4: "Meeting",
     5: "Maintenance",
+    6: "Rework",
+    7: "Needle break",
 }
