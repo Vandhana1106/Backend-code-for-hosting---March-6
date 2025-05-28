@@ -1,7 +1,7 @@
 from django.contrib import admin
 from import_export.admin import ExportMixin, ImportExportModelAdmin
 from import_export import resources
-from .models import MachineLog
+from .models import MachineLog, UserMachineLog, ModeMessage
 
 # Define resource for import/export
 class MachineLogResource(resources.ModelResource):
@@ -21,7 +21,6 @@ class MachineLogAdmin(ImportExportModelAdmin, admin.ModelAdmin):
 # Register the model with custom admin
 admin.site.register(MachineLog, MachineLogAdmin)
 
-
 # admin.py
 
 from django.contrib import admin
@@ -32,3 +31,9 @@ class UserMachineLogAdmin(admin.ModelAdmin):
     list_display = ['MACHINE_ID', 'OPERATOR_ID', 'DATE', 'START_TIME', 'END_TIME']
     search_fields = ['MACHINE_ID', 'OPERATOR_ID']
     list_filter = ['DATE', 'MODE']
+
+# Register ModeMessage model
+@admin.register(ModeMessage)
+class ModeMessageAdmin(admin.ModelAdmin):
+    list_display = ['mode', 'message']
+    search_fields = ['mode', 'message']
