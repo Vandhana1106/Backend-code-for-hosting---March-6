@@ -1,7 +1,7 @@
 from django.contrib import admin
 from import_export.admin import ExportMixin, ImportExportModelAdmin
 from import_export import resources
-from .models import MachineLog, UserMachineLog, ModeMessage
+from .models import MachineLog, UserMachineLog, ModeMessage, Operator, OperatorAFL
 
 # Define resource for import/export
 class MachineLogResource(resources.ModelResource):
@@ -37,3 +37,16 @@ class UserMachineLogAdmin(admin.ModelAdmin):
 class ModeMessageAdmin(admin.ModelAdmin):
     list_display = ['mode', 'message']
     search_fields = ['mode', 'message']
+
+# Register Operator model
+@admin.register(Operator)
+class OperatorAdmin(admin.ModelAdmin):
+    list_display = ['rfid_card_no', 'operator_name', 'remarks']
+    search_fields = ['rfid_card_no', 'operator_name', 'remarks']
+
+# Register OperatorAFL model
+@admin.register(OperatorAFL)
+class OperatorAFLAdmin(admin.ModelAdmin):
+    list_display = ['rfid_card_no', 'operatorAFL_name', 'is_active', 'created_at']
+    search_fields = ['rfid_card_no', 'operatorAFL_name']
+    list_filter = ['is_active', 'created_at']
