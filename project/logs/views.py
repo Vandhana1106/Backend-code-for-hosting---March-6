@@ -364,7 +364,7 @@ def operator_reports_by_name(request, operator_name):
     # Exclude records where OPERATOR_ID is 0 AND MODE is 2
     logs = logs.exclude(Q(OPERATOR_ID=0) & Q(MODE=2))
 
-    # Calculate duration in hours for each log entry with time constraints
+    # Calculate duration in hours for each log entry
     logs = logs.annotate(
         start_seconds=ExpressionWrapper(
             ExtractHour('START_TIME') * 3600 + 
@@ -378,65 +378,22 @@ def operator_reports_by_name(request, operator_name):
             ExtractSecond('END_TIME'),
             output_field=FloatField()
         ),
-        adjusted_start_seconds=Case(
-            When(start_seconds__lt=30300, then=Value(30300)),
-            When(start_seconds__gt=70500, then=Value(70500)),
-            default=F('start_seconds'),
-            output_field=FloatField()
-        ),
-        adjusted_end_seconds=Case(
-            When(end_seconds__lt=30300, then=Value(30300)),
-            When(end_seconds__gt=70500, then=Value(70500)),
-            default=F('end_seconds'),
-            output_field=FloatField()
-        ),
-        duration_hours=Case(
-            When(Q(end_seconds__lte=30300) | Q(start_seconds__gte=70500), then=Value(0)),
-            default=ExpressionWrapper(
-                (F('adjusted_end_seconds') - F('adjusted_start_seconds')) / 3600,
-                output_field=FloatField()
-            ),
+        duration_hours=ExpressionWrapper(
+            (F('end_seconds') - F('start_seconds')) / 3600,
             output_field=FloatField()
         ),
         reserve_numeric=Cast('RESERVE', output_field=IntegerField())
     ).filter(duration_hours__gt=0)
 
-    # Filter for working hours and exclude breaks
-    logs = logs.filter(start_seconds__gte=30300, end_seconds__lte=70500)
-    logs = logs.exclude(
-        Q(start_seconds__gte=37800, end_seconds__lte=38400) |  # 10:30-10:40
-        Q(start_seconds__gte=48000, end_seconds__lte=50400) |  # 13:20-14:00
-        Q(start_seconds__gte=58800, end_seconds__lte=59400)    # 16:20-16:30
-    )
-
-    # Calculate total working days and available hours
+    # Calculate total working days and available hours (fixed 10 hours per day)
     distinct_dates = logs.values('DATE').distinct()
     total_working_days = distinct_dates.count()
-    today = datetime.now().date()
-    total_available_hours = 0
-
-    for entry in distinct_dates:
-        date_entry = entry['DATE']
-        if date_entry == today:
-            current_time = datetime.now().time()
-            current_seconds = current_time.hour * 3600 + current_time.minute * 60 + current_time.second
-            start_seconds = 30300
-            end_seconds = min(current_seconds, 70500)
-            if current_seconds < start_seconds:
-                day_hours = 0
-            else:
-                day_hours = (end_seconds - start_seconds) / 3600
-                if current_seconds > 38400: day_hours -= 10/60
-                if current_seconds > 50400: day_hours -= 40/60
-                if current_seconds > 59400: day_hours -= 10/60
-        else:
-            day_hours = (70500 - 30300) / 3600 - 1  # 10.17 hours
-        total_available_hours += day_hours
+    total_available_hours = total_working_days * 10  # Fixed 10 hours per day
 
     # Calculate hours for each mode (including new modes 6 and 7)
     mode_hours = logs.values('MODE').annotate(total_hours=Sum('duration_hours'))
     
-    # Initialize hour counters - KEEP RAW VALUES (NO CLAMPING)
+    # Initialize hour counters
     total_production_hours = 0
     total_meeting_hours = 0
     total_no_feeding_hours = 0
@@ -452,30 +409,30 @@ def operator_reports_by_name(request, operator_name):
         elif mode['MODE'] == 6: total_rework_hours = mode['total_hours'] or 0
         elif mode['MODE'] == 7: total_needle_break_hours = mode['total_hours'] or 0
 
-    # SMART PERCENTAGE HANDLING - No clamping of hours, only percentages
-    if total_production_hours > total_available_hours:
-        # Scenario: Machine worked more than available time (overlapping logs, etc.)
-        production_percentage = 100.0  # Cap at 100%
-        npt_percentage = 0.0           # NPT becomes 0%
-        
-        # For idle calculation in this scenario, set to 0
+    # Calculate work hours and idle hours according to rules
+    total_work_hours = (
+        total_production_hours + 
+        total_no_feeding_hours + 
+        total_meeting_hours + 
+        total_maintenance_hours +
+        total_rework_hours +
+        total_needle_break_hours
+    )
+    
+    # Rule 2 & 3: Calculate idle hours
+    if total_work_hours > 10 * total_working_days:
         total_idle_hours = 0
     else:
-        # Normal calculation
-        production_percentage = (total_production_hours / total_available_hours * 100) if total_available_hours > 0 else 0
-        
-        # Calculate idle hours normally
-        total_logged_hours = (
-            total_production_hours + 
-            total_no_feeding_hours + 
-            total_meeting_hours + 
-            total_maintenance_hours +
-            total_rework_hours +
-            total_needle_break_hours
-        )
-        total_idle_hours = max(total_available_hours - total_logged_hours, 0)
-        
-        npt_percentage = 100 - production_percentage
+        total_idle_hours = (10 * total_working_days) - total_work_hours
+
+    # Rule 4: Total hours is always work hours + idle hours
+    total_hours = total_work_hours + total_idle_hours
+
+    # Rule 5: Productive time percentage
+    production_percentage = (total_production_hours / total_hours * 100) if total_hours > 0 else 0
+    
+    # Rule 6: NPT percentage
+    npt_percentage = 100 - production_percentage
 
     # Calculate non-productive time (now includes rework and needle breaks)
     total_non_production_hours = (
@@ -487,15 +444,13 @@ def operator_reports_by_name(request, operator_name):
         total_idle_hours
     )
 
-    # Other metrics (sewing speed, stitch count, needle runtime remain same)
+   # Rule 7: Sewing speed and stitch count as integers
     valid_speed_logs = logs.filter(reserve_numeric__gt=0)
-    average_sewing_speed = valid_speed_logs.aggregate(avg_speed=Avg('reserve_numeric'))['avg_speed'] or 0
-    total_stitch_count = logs.aggregate(total=Sum('STITCH_COUNT', default=0))['total'] or 0
-    
+    average_sewing_speed = int(valid_speed_logs.aggregate(avg_speed=Avg('reserve_numeric'))['avg_speed'] or 0)
+    total_stitch_count = int(logs.aggregate(total=Sum('STITCH_COUNT', default=0))['total'] or 0)
+    # Rule 8: Needle runtime percentage
     sewing_logs = logs.filter(MODE=1)
     total_needle_runtime = sewing_logs.aggregate(total_runtime=Sum('NEEDLE_RUNTIME', default=0))['total_runtime'] or 0
-    needle_runtime_instances = sewing_logs.count()
-    average_needle_runtime = total_needle_runtime / needle_runtime_instances if needle_runtime_instances > 0 else 0
     total_needle_runtime_hours = total_needle_runtime / 3600
     needle_runtime_percentage = (total_needle_runtime_hours / total_production_hours * 100) if total_production_hours > 0 else 0
 
@@ -505,14 +460,14 @@ def operator_reports_by_name(request, operator_name):
         meeting_hours=Sum(Case(When(MODE=4, then=F('duration_hours')), default=Value(0), output_field=FloatField())),
         no_feeding_hours=Sum(Case(When(MODE=3, then=F('duration_hours')), default=Value(0), output_field=FloatField())),
         maintenance_hours=Sum(Case(When(MODE=5, then=F('duration_hours')), default=Value(0), output_field=FloatField())),
-        rework_hours=Sum(Case(When(MODE=6, then=F('duration_hours')), default=Value(0), output_field=FloatField())),       # NEW
-        needle_break_hours=Sum(Case(When(MODE=7, then=F('duration_hours')), default=Value(0), output_field=FloatField())), # NEW
+        rework_hours=Sum(Case(When(MODE=6, then=F('duration_hours')), default=Value(0), output_field=FloatField())),
+        needle_break_hours=Sum(Case(When(MODE=7, then=F('duration_hours')), default=Value(0), output_field=FloatField())),
         total_stitch_count=Sum('STITCH_COUNT'),
         sewing_speed=Avg(Case(When(reserve_numeric__gt=0, then=F('reserve_numeric')), default=Value(0), output_field=FloatField())),
         needle_runtime=Sum('NEEDLE_RUNTIME')
     ).order_by('DATE', 'OPERATOR_ID')
 
-    # Format table data with smart percentage handling for daily breakdown
+    # Format table data with the new rules for daily breakdown
     formatted_table_data = []
     for data in table_data:
         try:
@@ -521,52 +476,40 @@ def operator_reports_by_name(request, operator_name):
         except Operator.DoesNotExist:
             operator_name = "Unknown"
 
-        entry_date = data['DATE']
-        if entry_date == today:
-            current_seconds = datetime.now().time().hour * 3600 + datetime.now().time().minute * 60 + datetime.now().time().second
-            start_seconds = 30300
-            end_seconds = min(current_seconds, 70500)
-            if current_seconds < start_seconds:
-                day_total_hours = 0
-            else:
-                day_total_hours = (end_seconds - start_seconds) / 3600
-                if current_seconds > 38400: day_total_hours -= 10/60
-                if current_seconds > 50400: day_total_hours -= 40/60
-                if current_seconds > 59400: day_total_hours -= 10/60
-        else:
-            day_total_hours = (70500 - 30300) / 3600 - 1
-
-        # Get raw hours (no clamping)
+        # Calculate work hours for the day
         sewing_hours = data['sewing_hours'] or 0
         meeting_hours = data['meeting_hours'] or 0
         no_feeding_hours = data['no_feeding_hours'] or 0
         maintenance_hours = data['maintenance_hours'] or 0
-        rework_hours = data['rework_hours'] or 0          # NEW
-        needle_break_hours = data['needle_break_hours'] or 0 # NEW
+        rework_hours = data['rework_hours'] or 0
+        needle_break_hours = data['needle_break_hours'] or 0
 
-        # Smart percentage calculation for daily breakdown
-        if sewing_hours > day_total_hours:
-            # Sewing hours exceed available time for this day
-            productive_time_percentage = 100.0
-            npt_percentage = 0.0
+        work_hours = (
+            sewing_hours + 
+            no_feeding_hours + 
+            meeting_hours + 
+            maintenance_hours +
+            rework_hours +
+            needle_break_hours
+        )
+        
+        # Rule 2 & 3 for daily breakdown
+        if work_hours > 10:
             idle_hours = 0
         else:
-            # Normal calculation
-            total_logged = (
-                sewing_hours + 
-                no_feeding_hours + 
-                meeting_hours + 
-                maintenance_hours +
-                rework_hours +
-                needle_break_hours
-            )
-            idle_hours = max(day_total_hours - total_logged, 0)
-            
-            productive_time_percentage = (sewing_hours / day_total_hours * 100) if day_total_hours > 0 else 0
-            npt_percentage = 100 - productive_time_percentage
+            idle_hours = 10 - work_hours
+
+       # Rule 4: Total hours is the sum of all activities (work_hours + idle_hours)
+        day_total_hours = work_hours + idle_hours
+
+        # Rule 5: Productive time percentage for the day
+        productive_time_percentage = (sewing_hours / day_total_hours * 100) if day_total_hours > 0 else 0
+        
+        # Rule 6: NPT percentage for the day
+        day_npt_percentage = 100 - productive_time_percentage
 
         formatted_table_data.append({
-            'Date': str(entry_date),
+            'Date': str(data['DATE']),
             'Operator ID': data['OPERATOR_ID'],
             'Operator Name': operator_name,
             'Total Hours': decimal_hours_to_hhmm(day_total_hours),
@@ -575,13 +518,13 @@ def operator_reports_by_name(request, operator_name):
             'Meeting Hours': decimal_hours_to_hhmm(meeting_hours),
             'No Feeding Hours': decimal_hours_to_hhmm(no_feeding_hours),
             'Maintenance Hours': decimal_hours_to_hhmm(maintenance_hours),
-            'Rework Hours': decimal_hours_to_hhmm(rework_hours),               # NEW
-            'Needle Break Hours': decimal_hours_to_hhmm(needle_break_hours),   # NEW
-            'Productive Time %': round(production_percentage, 2),
-            'NPT %': round(npt_percentage, 2),
-            'Sewing Speed': round(data['sewing_speed'] or 0, 2),
-            'Stitch Count': data['total_stitch_count'] or 0,
-            'Needle Runtime': data['needle_runtime'] or 0
+            'Rework Hours': decimal_hours_to_hhmm(rework_hours),
+            'Needle Break Hours': decimal_hours_to_hhmm(needle_break_hours),
+            'Productive Time %': round(productive_time_percentage, 2),
+            'NPT %': round(day_npt_percentage, 2),
+            'Sewing Speed': int(data['sewing_speed'] or 0),  # Rule 7: integer value
+            'Stitch Count': int(data['total_stitch_count'] or 0),  # Rule 7: integer value
+            'Needle Runtime': int(data['needle_runtime'] or 0)
         })
 
     return Response({
@@ -593,20 +536,20 @@ def operator_reports_by_name(request, operator_name):
         "totalIdleHoursFormatted": decimal_hours_to_hhmm(total_idle_hours),
         "productionPercentage": round(production_percentage, 2),
         "nptPercentage": round(npt_percentage, 2),
-        "averageSewingSpeed": round(average_sewing_speed, 2),
-        "totalStitchCount": total_stitch_count,
-        "totalNeedleRuntime": round(average_needle_runtime, 2),
+        "averageSewingSpeed": average_sewing_speed,  # Already integer per Rule 7
+        "totalStitchCount": total_stitch_count,  # Already integer per Rule 7
+        "totalNeedleRuntime": int(total_needle_runtime),  # Rule 7: integer value
         "totalNeedleRuntimeFormatted": decimal_hours_to_hhmm(total_needle_runtime_hours),
         "needleRuntimePercentage": round(needle_runtime_percentage, 2),
         "tableData": formatted_table_data,
-        "totalHours": round(total_available_hours, 2),
-        "totalHoursFormatted": decimal_hours_to_hhmm(total_available_hours),
+        "totalHours": round(total_hours, 2),
+        "totalHoursFormatted": decimal_hours_to_hhmm(total_hours),
         "totalPT": round(total_production_hours, 2),
         "totalPTFormatted": decimal_hours_to_hhmm(total_production_hours),
         "totalNPT": round(total_non_production_hours, 2),
         "totalNPTFormatted": decimal_hours_to_hhmm(total_non_production_hours),
-        "totalReworkHours": round(total_rework_hours, 2),                   # NEW
-        "totalNeedleBreakHours": round(total_needle_break_hours, 2)         # NEW
+        "totalReworkHours": round(total_rework_hours, 2),
+        "totalNeedleBreakHours": round(total_needle_break_hours, 2)
     })
 from django.db.models import Sum, Case, When, Value, FloatField, F, ExpressionWrapper, Q, IntegerField, Avg, Count
 from django.db.models.functions import ExtractHour, ExtractMinute, ExtractSecond, Cast
